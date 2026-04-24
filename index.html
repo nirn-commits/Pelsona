@@ -89,6 +89,7 @@
         <label class="field">
           <span>プロバイダ</span>
           <select id="apiProvider">
+            <option value="gemini">Google Gemini</option>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="openai">OpenAI 互換 (OpenAI / LM Studio / Ollama 等)</option>
           </select>
@@ -100,11 +101,11 @@
         </label>
         <label class="field">
           <span>エンドポイント (任意・OpenAI互換の時のみ)</span>
-          <input type="text" id="apiBase" placeholder="https://api.openai.com/v1" />
+          <input type="text" id="apiBase" placeholder="例: https://api.openai.com/v1" />
         </label>
         <label class="field">
           <span>モデル名</span>
-          <input type="text" id="apiModel" placeholder="claude-opus-4-7 / gpt-4o-mini など" />
+          <input type="text" id="apiModel" placeholder="gemini-2.5-flash / claude-opus-4-7 / gpt-4o-mini など" />
         </label>
         <label class="field">
           <span>Temperature</span>

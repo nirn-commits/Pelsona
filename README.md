@@ -12,12 +12,13 @@ LLM の API を使って、自由に設定したキャラクターとチャッ�
   - 複数キャラを同時に選ぶとグループ会話になる (LLM が各キャラを演じ分ける)
 - キャラごとに **設定 (人格・背景)** と **口調 (話し方の特徴)** を登録可能
 - API キー・キャラ設定・会話履歴はすべて **ブラウザの localStorage** に保存
-- **Anthropic (Claude)** と **OpenAI 互換 API** に対応
+- **Google Gemini** / **Anthropic (Claude)** / **OpenAI 互換 API** に対応
 
 ## 使い方
 
 1. `index.html` をブラウザで開く (`file://` でも動作します)。
 2. 右上の「⚙ API」から LLM の API を設定
+   - **Google Gemini**: [Google AI Studio](https://aistudio.google.com/apikey) で取得した API キーを入力。モデル名は `gemini-2.5-flash` / `gemini-2.5-pro` / `gemini-2.0-flash` など。
    - **Anthropic (Claude)**: API キーを入力、モデル名は例えば `claude-opus-4-7`
    - **OpenAI 互換**: API キー、エンドポイント (`https://api.openai.com/v1` や LM Studio の `http://localhost:1234/v1` 等)、モデル名
 3. 下部の空きスロットをクリックし、名前 / 画像 / キャラ設定 / 口調 / 最初の一言 を入力
@@ -48,11 +49,11 @@ LLM の API を使って、自由に設定したキャラクターとチャッ�
 ## セキュリティ上の注意
 
 - API キーはブラウザの `localStorage` に平文で保存されます。共有端末での利用は避けてください。
-- Anthropic API をブラウザから直接呼ぶため `anthropic-dangerous-direct-browser-access: true` ヘッダを付けています。本番用途 (不特定多数が使うサイト) では、API キーを隠蔽するためのバックエンドプロキシを挟むことを推奨します。
+- Gemini / Anthropic / OpenAI いずれもブラウザから直接 API を叩きます (Anthropic は `anthropic-dangerous-direct-browser-access: true` を付与)。本番用途 (不特定多数が使うサイト) では、API キーを隠蔽するためのバックエンドプロキシを挟むことを推奨します。
 - 画像はデータ URL として localStorage に保存されるため、大きすぎる画像を多数登録するとブラウザのストレージ上限に達する可能性があります。アプリ側で長辺 512px に縮小保存しています。
 
 ## カスタマイズのヒント
 
 - スロット数を変えたい場合: `app.js` の `SLOT_COUNT` と `index.html` 側の `.slot-bar` (`grid-template-columns: repeat(4, 1fr)`) を同時に変更。
 - プロンプトを調整したい場合: `buildSystemPrompt()` を編集。
-- ストリーミング応答に対応したい場合: `callAnthropic` / `callOpenAI` を SSE 対応に置き換え、`parseAssistantReply` を逐次呼び出す設計に変更。
+- ストリーミング応答に対応したい場合: `callGemini` / `callAnthropic` / `callOpenAI` を SSE 対応に置き換え、`parseAssistantReply` を逐次呼び出す設計に変更。

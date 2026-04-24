@@ -9,12 +9,18 @@ const LS_API = "pelsona.api.v1";
 const LS_HISTORY = "pelsona.history.v1";
 
 const DEFAULT_API = {
-  provider: "anthropic",
+  provider: "gemini",
   key: "",
   base: "",
-  model: "claude-opus-4-7",
+  model: "gemini-2.5-flash",
   temperature: 0.8,
   maxTokens: 1024,
+};
+
+const DEFAULT_MODEL_BY_PROVIDER = {
+  gemini: "gemini-2.5-flash",
+  anthropic: "claude-opus-4-7",
+  openai: "gpt-4o-mini",
 };
 
 const EMPTY_CHAR = () => ({
@@ -365,16 +371,25 @@ function openApiModal() {
 }
 
 $("#apiSave").addEventListener("click", () => {
+  const provider = apiProvider.value;
   state.api = {
-    provider: apiProvider.value,
+    provider,
     key: apiKey.value.trim(),
     base: apiBase.value.trim(),
-    model: apiModel.value.trim() || DEFAULT_API.model,
+    model: apiModel.value.trim() || DEFAULT_MODEL_BY_PROVIDER[provider] || DEFAULT_API.model,
     temperature: Number(apiTemp.value) || 0.8,
     maxTokens: Math.max(64, Math.min(8192, Number(apiMaxTokens.value) || 1024)),
   };
   saveApi();
   hideModal(apiModal);
+});
+
+apiProvider.addEventListener("change", () => {
+  const current = apiModel.value.trim();
+  const knownDefaults = Object.values(DEFAULT_MODEL_BY_PROVIDER);
+  if (!current || knownDefaults.includes(current)) {
+    apiModel.value = DEFAULT_MODEL_BY_PROVIDER[apiProvider.value] || "";
+  }
 });
 
 $("#btnApi").addEventListener("click", openApiModal);
@@ -529,10 +544,56 @@ async function callLLM() {
   const systemPrompt = buildSystemPrompt();
   const messages = buildHistoryForAPI();
 
+  if (state.api.provider === "gemini") {
+    return await callGemini(systemPrompt, messages);
+  }
   if (state.api.provider === "anthropic") {
     return await callAnthropic(systemPrompt, messages);
   }
   return await callOpenAI(systemPrompt, messages);
+}
+
+async function callGemini(system, messages) {
+  const base = (state.api.base || "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, "");
+  const model = encodeURIComponent(state.api.model);
+  const url = `${base}/models/${model}:generateContent`;
+  // Gemini requires the first content to be role "user".
+  // Drop any leading assistant/model messages (e.g. greetings).
+  const trimmed = [...messages];
+  while (trimmed.length && trimmed[0].role !== "user") trimmed.shift();
+  const body = {
+    systemInstruction: { parts: [{ text: system }] },
+    contents: trimmed.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    })),
+    generationConfig: {
+      temperature: state.api.temperature,
+      maxOutputTokens: state.api.maxTokens,
+    },
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-goog-api-key": state.api.key,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Gemini API ${res.status}: ${txt}`);
+  }
+  const data = await res.json();
+  const cand = data.candidates?.[0];
+  const text = (cand?.content?.parts || [])
+    .map((p) => p.text || "")
+    .join("")
+    .trim();
+  if (!text && cand?.finishReason && cand.finishReason !== "STOP") {
+    throw new Error(`Gemini 応答が空です (finishReason: ${cand.finishReason})`);
+  }
+  return text;
 }
 
 async function callAnthropic(system, messages) {
