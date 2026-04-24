@@ -1,12 +1,25 @@
 /* Pelsona — LLM character chat framework
- * Single-page app. State persists in localStorage.
- * Slot 0 = self (user). Slots 1..3 = NPC characters.
+ * Features:
+ *  - 4 character slots per chat (slot 0 = self)
+ *  - Character preset library (save / load)
+ *  - Multiple saved chats (switch, rename, delete)
+ *  - World (global) + Situation (per-chat) settings
+ *  - Carryover memo for continuation across chats
+ *  - Gemini / Anthropic / OpenAI-compatible providers
  */
 
+// ---------- Constants ----------
 const SLOT_COUNT = 4;
-const LS_CHARS = "pelsona.chars.v1";
-const LS_API = "pelsona.api.v1";
-const LS_HISTORY = "pelsona.history.v1";
+const LS = {
+  presets: "pelsona.presets.v1",
+  chats: "pelsona.chats.v1",
+  current: "pelsona.current.v1",
+  world: "pelsona.world.v1",
+  api: "pelsona.api.v1",
+  // legacy
+  oldChars: "pelsona.chars.v1",
+  oldHistory: "pelsona.history.v1",
+};
 
 const DEFAULT_API = {
   provider: "gemini",
@@ -17,79 +30,167 @@ const DEFAULT_API = {
   maxTokens: 1024,
 };
 
-const DEFAULT_MODEL_BY_PROVIDER = {
+const DEFAULT_MODELS = {
   gemini: "gemini-2.5-flash",
   anthropic: "claude-opus-4-7",
   openai: "gpt-4o-mini",
 };
 
 const EMPTY_CHAR = () => ({
-  name: "",
-  image: "", // data URL
-  persona: "",
-  tone: "",
-  greeting: "",
+  name: "", image: "", persona: "", tone: "", greeting: "",
 });
 
+// ---------- Helpers ----------
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(36).slice(2));
+const now = () => Date.now();
+
+function newSlots() {
+  const a = Array.from({ length: SLOT_COUNT }, () => EMPTY_CHAR());
+  a[0].name = "自分";
+  return a;
+}
+function makeChat(opts = {}) {
+  return {
+    id: opts.id || uid(),
+    name: opts.name || "新しい会話",
+    createdAt: opts.createdAt || now(),
+    updatedAt: opts.updatedAt || now(),
+    slots: opts.slots || newSlots(),
+    selectedIdxs: opts.selectedIdxs || [],
+    situation: opts.situation || "",
+    carryover: opts.carryover || "",
+    history: opts.history || [],
+  };
+}
+
+// ---------- State ----------
 const state = {
-  chars: loadChars(),
-  api: loadApi(),
-  selected: new Set(), // indices of selected NPC slots (1..3)
-  history: loadHistory(), // array of {role: 'user'|'assistant', name?, content}
-  sending: false,
+  presets: [],
+  chats: [],
+  currentChatId: "",
+  world: { name: "", description: "" },
+  api: { ...DEFAULT_API },
   editingSlot: null,
+  sending: false,
+  drawerTab: "chats",
 };
+function currentChat() {
+  return state.chats.find((c) => c.id === state.currentChatId) || state.chats[0];
+}
+function setCurrentChat(id) {
+  state.currentChatId = id;
+  saveCurrent();
+}
 
 // ---------- Persistence ----------
-function loadChars() {
+function saveChats() { localStorage.setItem(LS.chats, JSON.stringify(state.chats)); }
+function saveCurrent() { localStorage.setItem(LS.current, JSON.stringify({ id: state.currentChatId })); }
+function savePresets() { localStorage.setItem(LS.presets, JSON.stringify(state.presets)); }
+function saveWorld() { localStorage.setItem(LS.world, JSON.stringify(state.world)); }
+function saveApi() { localStorage.setItem(LS.api, JSON.stringify(state.api)); }
+
+function touchChat() {
+  const c = currentChat();
+  if (c) c.updatedAt = now();
+  saveChats();
+}
+
+function loadAll() {
+  try { state.presets = JSON.parse(localStorage.getItem(LS.presets)) || []; } catch { state.presets = []; }
+  try { state.chats = JSON.parse(localStorage.getItem(LS.chats)) || []; } catch { state.chats = []; }
   try {
-    const raw = localStorage.getItem(LS_CHARS);
-    if (!raw) throw 0;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length !== SLOT_COUNT) throw 0;
-    return parsed.map((c, i) => ({ ...EMPTY_CHAR(), ...(c || {}), isSelf: i === 0 }));
-  } catch {
-    const arr = Array.from({ length: SLOT_COUNT }, () => EMPTY_CHAR());
-    arr[0].name = "自分";
-    arr[0].isSelf = true;
-    return arr;
+    const w = JSON.parse(localStorage.getItem(LS.world)) || {};
+    state.world = { name: "", description: "", ...w };
+  } catch { state.world = { name: "", description: "" }; }
+  try {
+    const a = JSON.parse(localStorage.getItem(LS.api)) || {};
+    state.api = { ...DEFAULT_API, ...a };
+  } catch { state.api = { ...DEFAULT_API }; }
+  try {
+    const c = JSON.parse(localStorage.getItem(LS.current)) || {};
+    state.currentChatId = c.id || "";
+  } catch { state.currentChatId = ""; }
+
+  // Migration from v1 if no chats exist
+  if (state.chats.length === 0) {
+    let slots = null, history = [];
+    try {
+      const old = JSON.parse(localStorage.getItem(LS.oldChars));
+      if (Array.isArray(old) && old.length === SLOT_COUNT) {
+        slots = old.map((c) => ({ ...EMPTY_CHAR(), ...(c || {}) }));
+      }
+    } catch {}
+    try {
+      const h = JSON.parse(localStorage.getItem(LS.oldHistory));
+      if (Array.isArray(h)) history = h;
+    } catch {}
+    const chat = makeChat({
+      name: history.length ? "以前の会話" : "最初の会話",
+      slots: slots || newSlots(),
+      history,
+    });
+    state.chats.push(chat);
+    state.currentChatId = chat.id;
+    saveChats(); saveCurrent();
+  }
+  if (!currentChat()) {
+    state.currentChatId = state.chats[0].id;
+    saveCurrent();
   }
 }
-function saveChars() { localStorage.setItem(LS_CHARS, JSON.stringify(state.chars)); }
 
-function loadApi() {
-  try {
-    return { ...DEFAULT_API, ...JSON.parse(localStorage.getItem(LS_API) || "{}") };
-  } catch { return { ...DEFAULT_API }; }
-}
-function saveApi() { localStorage.setItem(LS_API, JSON.stringify(state.api)); }
-
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(LS_HISTORY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-function saveHistory() { localStorage.setItem(LS_HISTORY, JSON.stringify(state.history)); }
-
-// ---------- DOM ----------
-const $ = (sel) => document.querySelector(sel);
+// ---------- DOM refs ----------
 const slotBar = $("#slotBar");
 const messagesEl = $("#messages");
 const placeholderEl = $("#placeholder");
+const chatNameLabel = $("#chatNameLabel");
+const activeLabel = $("#activeLabel");
 const inputEl = $("#input");
 const composerEl = $("#composer");
 const sendBtn = $("#btnSend");
-const activeLabel = $("#activeLabel");
+const toastEl = $("#toast");
+
+// ---------- Toast ----------
+let toastTimer = null;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 2200);
+}
+
+// ---------- Modal helpers ----------
+function showModal(el) { el.classList.remove("hidden"); }
+function hideModal(el) { el.classList.add("hidden"); }
+
+// ---------- Top bar / chat label ----------
+function renderTopbar() {
+  const chat = currentChat();
+  chatNameLabel.textContent = chat ? chat.name : "(未選択)";
+  updateActiveLabel();
+}
+function updateActiveLabel() {
+  const chat = currentChat();
+  if (!chat || !chat.selectedIdxs.length) {
+    activeLabel.textContent = "キャラ未選択";
+    return;
+  }
+  const names = chat.selectedIdxs.map((i) => chat.slots[i]?.name || `CH${i}`).join(" / ");
+  activeLabel.textContent = `会話中: ${names}`;
+}
 
 // ---------- Slots ----------
 function renderSlots() {
+  const chat = currentChat();
   slotBar.innerHTML = "";
-  state.chars.forEach((ch, idx) => {
+  if (!chat) return;
+  chat.slots.forEach((ch, idx) => {
     const slot = document.createElement("div");
     slot.className = "slot";
     if (idx === 0) slot.classList.add("self");
-    if (state.selected.has(idx)) slot.classList.add("selected");
+    if (chat.selectedIdxs.includes(idx)) slot.classList.add("selected");
     slot.dataset.idx = String(idx);
 
     if (ch.image) {
@@ -100,8 +201,13 @@ function renderSlots() {
     } else {
       const empty = document.createElement("div");
       empty.className = "slot-empty";
-      empty.textContent = idx === 0 ? "自分\n(クリックで編集)" : "空き枠\n(クリックで設定)";
-      empty.style.whiteSpace = "pre-line";
+      const icon = document.createElement("div");
+      icon.className = "slot-empty-icon";
+      icon.textContent = idx === 0 ? "👤" : "＋";
+      const label = document.createElement("div");
+      label.textContent = idx === 0 ? "自分" : "空き枠";
+      empty.appendChild(icon);
+      empty.appendChild(label);
       slot.appendChild(empty);
     }
 
@@ -130,58 +236,39 @@ function renderSlots() {
 
     slot.addEventListener("click", () => onSlotClick(idx));
     slot.addEventListener("dblclick", () => openCharModal(idx));
-
     slotBar.appendChild(slot);
   });
   updateActiveLabel();
 }
 
 function onSlotClick(idx) {
-  const ch = state.chars[idx];
-  // Self slot: edit only
-  if (idx === 0) {
-    openCharModal(0);
-    return;
-  }
-  // Empty NPC slot: open editor
-  if (!ch.name && !ch.persona && !ch.tone && !ch.image) {
-    openCharModal(idx);
-    return;
-  }
-  // Toggle selection
-  if (state.selected.has(idx)) {
-    state.selected.delete(idx);
-  } else {
-    state.selected.add(idx);
-  }
+  const chat = currentChat();
+  if (!chat) return;
+  const ch = chat.slots[idx];
+  if (idx === 0) { openCharModal(0); return; }
+  const empty = !ch.name && !ch.persona && !ch.tone && !ch.image;
+  if (empty) { openCharModal(idx); return; }
+  const set = new Set(chat.selectedIdxs);
+  if (set.has(idx)) set.delete(idx); else set.add(idx);
+  chat.selectedIdxs = [...set].sort((a, b) => a - b);
+  touchChat();
   renderSlots();
-  renderMessages();
-}
-
-function updateActiveLabel() {
-  if (state.selected.size === 0) {
-    activeLabel.textContent = "キャラ未選択";
-    return;
-  }
-  const names = [...state.selected]
-    .map((i) => state.chars[i].name || `CH${i}`)
-    .join(" / ");
-  activeLabel.textContent = `会話中: ${names}`;
 }
 
 // ---------- Messages ----------
 function renderMessages() {
+  const chat = currentChat();
   messagesEl.innerHTML = "";
-  if (state.history.length === 0) {
+  if (!chat || chat.history.length === 0) {
     placeholderEl.style.display = "flex";
   } else {
     placeholderEl.style.display = "none";
+    for (const m of chat.history) appendMessageEl(m);
   }
-  for (const m of state.history) appendMessageEl(m);
   scrollMessagesToBottom();
 }
-
 function appendMessageEl(m) {
+  const chat = currentChat();
   const wrap = document.createElement("div");
   wrap.className = "msg";
   if (m.role === "user") wrap.classList.add("me");
@@ -191,7 +278,7 @@ function appendMessageEl(m) {
   if (m.role !== "system" && m.role !== "error") {
     const avatar = document.createElement("div");
     avatar.className = "avatar";
-    const ch = findCharFor(m);
+    const ch = findCharFor(m, chat);
     if (ch && ch.image) {
       avatar.style.backgroundImage = `url("${ch.image}")`;
     } else {
@@ -201,11 +288,11 @@ function appendMessageEl(m) {
   }
 
   const body = document.createElement("div");
+  body.className = "msg-body";
   const name = document.createElement("div");
   name.className = "name";
-  if (m.role === "user") name.textContent = state.chars[0].name || "自分";
+  if (m.role === "user") name.textContent = (chat?.slots[0].name) || "自分";
   else if (m.role === "assistant") name.textContent = m.name || "assistant";
-  else name.textContent = "";
   if (name.textContent) body.appendChild(name);
 
   const bubble = document.createElement("div");
@@ -214,118 +301,351 @@ function appendMessageEl(m) {
   bubble.textContent = m.content;
   body.appendChild(bubble);
   wrap.appendChild(body);
-
   messagesEl.appendChild(wrap);
 }
-
-function findCharFor(m) {
-  if (m.role === "user") return state.chars[0];
+function findCharFor(m, chat) {
+  if (!chat) return null;
+  if (m.role === "user") return chat.slots[0];
   if (m.role === "assistant" && m.name) {
-    return state.chars.find((c, i) => i !== 0 && c.name === m.name) || null;
+    return chat.slots.find((c, i) => i !== 0 && c.name === m.name) || null;
   }
   return null;
 }
-
 function scrollMessagesToBottom() {
-  const chat = $("#chatArea");
-  chat.scrollTop = chat.scrollHeight;
+  const chatEl = $("#chatArea");
+  chatEl.scrollTop = chatEl.scrollHeight;
 }
-
 function pushMessage(m) {
-  state.history.push(m);
-  saveHistory();
+  const chat = currentChat();
+  if (!chat) return;
+  chat.history.push(m);
+  touchChat();
   appendMessageEl(m);
   placeholderEl.style.display = "none";
   scrollMessagesToBottom();
 }
 
+// ---------- Drawer ----------
+const drawerEl = $("#drawer");
+function openDrawer(tab) {
+  if (tab) state.drawerTab = tab;
+  showModal(drawerEl);
+  switchDrawerTab(state.drawerTab);
+}
+function switchDrawerTab(name) {
+  state.drawerTab = name;
+  $$(".drawer-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $$(".drawer-section").forEach((s) => s.classList.toggle("active", s.dataset.panel === name));
+  if (name === "chats") renderChatsList();
+  if (name === "presets") renderPresetList();
+  if (name === "world") renderWorldForm();
+  if (name === "api") renderApiForm();
+}
+$$(".drawer-tab").forEach((b) => b.addEventListener("click", () => switchDrawerTab(b.dataset.tab)));
+$("#btnMenu").addEventListener("click", () => openDrawer(state.drawerTab || "chats"));
+drawerEl.addEventListener("click", (e) => { if (e.target === drawerEl) hideModal(drawerEl); });
+
+// ---------- Chats list ----------
+function renderChatsList() {
+  const list = $("#chatList");
+  list.innerHTML = "";
+  const sorted = [...state.chats].sort((a, b) => b.updatedAt - a.updatedAt);
+  if (!sorted.length) {
+    list.innerHTML = '<div class="list-empty">まだチャットがありません。「＋ 新しい会話」で作成してください。</div>';
+    return;
+  }
+  for (const c of sorted) {
+    const item = document.createElement("div");
+    item.className = "list-item" + (c.id === state.currentChatId ? " active" : "");
+
+    const main = document.createElement("div");
+    main.className = "list-item-main";
+    const title = document.createElement("div");
+    title.className = "list-item-title";
+    title.textContent = c.name || "(無題)";
+    const sub = document.createElement("div");
+    sub.className = "list-item-sub";
+    const last = c.history.length ? c.history[c.history.length - 1].content.slice(0, 40) : "(メッセージなし)";
+    sub.textContent = `${new Date(c.updatedAt).toLocaleString()} · ${last}`;
+    main.appendChild(title); main.appendChild(sub);
+
+    const actions = document.createElement("div");
+    actions.className = "list-item-actions";
+    const renameBtn = document.createElement("button");
+    renameBtn.className = "icon-btn"; renameBtn.title = "名前変更"; renameBtn.textContent = "✎";
+    renameBtn.addEventListener("click", (e) => { e.stopPropagation(); renameChat(c.id); });
+    const delBtn = document.createElement("button");
+    delBtn.className = "icon-btn"; delBtn.title = "削除"; delBtn.textContent = "🗑";
+    delBtn.addEventListener("click", (e) => { e.stopPropagation(); deleteChat(c.id); });
+    actions.appendChild(renameBtn); actions.appendChild(delBtn);
+
+    item.appendChild(main); item.appendChild(actions);
+    item.addEventListener("click", () => {
+      setCurrentChat(c.id);
+      renderAll();
+      hideModal(drawerEl);
+    });
+    list.appendChild(item);
+  }
+}
+function renameChat(id) {
+  const c = state.chats.find((x) => x.id === id);
+  if (!c) return;
+  const name = prompt("新しいチャット名", c.name);
+  if (name == null) return;
+  c.name = name.trim() || c.name;
+  c.updatedAt = now();
+  saveChats();
+  renderChatsList();
+  renderTopbar();
+}
+function deleteChat(id) {
+  if (state.chats.length <= 1) { toast("最後のチャットは削除できません"); return; }
+  const c = state.chats.find((x) => x.id === id);
+  if (!c) return;
+  if (!confirm(`「${c.name}」を削除しますか？`)) return;
+  state.chats = state.chats.filter((x) => x.id !== id);
+  if (state.currentChatId === id) state.currentChatId = state.chats[0].id;
+  saveChats(); saveCurrent();
+  renderAll();
+  toast("削除しました");
+}
+
+// ---------- Preset list (drawer) ----------
+function renderPresetList() {
+  const list = $("#presetList");
+  list.innerHTML = "";
+  if (!state.presets.length) {
+    list.innerHTML = '<div class="list-empty">プリセットがありません。キャラ編集画面の「プリセットに保存」から登録できます。</div>';
+    return;
+  }
+  for (const p of state.presets) {
+    const item = document.createElement("div");
+    item.className = "list-item";
+    const av = document.createElement("div");
+    av.className = "list-item-avatar";
+    if (p.image) av.style.backgroundImage = `url("${p.image}")`;
+    const main = document.createElement("div");
+    main.className = "list-item-main";
+    const title = document.createElement("div");
+    title.className = "list-item-title";
+    title.textContent = p.name || "(無名)";
+    const sub = document.createElement("div");
+    sub.className = "list-item-sub";
+    sub.textContent = (p.persona || "").slice(0, 60) || "(設定なし)";
+    main.appendChild(title); main.appendChild(sub);
+
+    const actions = document.createElement("div");
+    actions.className = "list-item-actions";
+    const delBtn = document.createElement("button");
+    delBtn.className = "icon-btn"; delBtn.title = "削除"; delBtn.textContent = "🗑";
+    delBtn.addEventListener("click", (e) => { e.stopPropagation(); deletePreset(p.id); });
+    actions.appendChild(delBtn);
+
+    item.appendChild(av); item.appendChild(main); item.appendChild(actions);
+    list.appendChild(item);
+  }
+}
+function deletePreset(id) {
+  const p = state.presets.find((x) => x.id === id);
+  if (!p) return;
+  if (!confirm(`プリセット「${p.name}」を削除しますか？`)) return;
+  state.presets = state.presets.filter((x) => x.id !== id);
+  savePresets();
+  renderPresetList();
+  toast("削除しました");
+}
+
+// ---------- World form ----------
+function renderWorldForm() {
+  $("#worldName").value = state.world.name || "";
+  $("#worldDescription").value = state.world.description || "";
+}
+$("#btnSaveWorld").addEventListener("click", () => {
+  state.world = {
+    name: $("#worldName").value.trim(),
+    description: $("#worldDescription").value.trim(),
+  };
+  saveWorld();
+  toast("世界観を保存しました");
+});
+
+// ---------- API form ----------
+function renderApiForm() {
+  $("#apiProvider").value = state.api.provider;
+  $("#apiKey").value = state.api.key;
+  $("#apiBase").value = state.api.base;
+  $("#apiModel").value = state.api.model;
+  $("#apiTemp").value = state.api.temperature;
+  $("#apiMaxTokens").value = state.api.maxTokens;
+}
+$("#apiProvider").addEventListener("change", () => {
+  const cur = $("#apiModel").value.trim();
+  const defaults = Object.values(DEFAULT_MODELS);
+  if (!cur || defaults.includes(cur)) {
+    $("#apiModel").value = DEFAULT_MODELS[$("#apiProvider").value] || "";
+  }
+});
+$("#apiSave").addEventListener("click", () => {
+  const provider = $("#apiProvider").value;
+  state.api = {
+    provider,
+    key: $("#apiKey").value.trim(),
+    base: $("#apiBase").value.trim(),
+    model: $("#apiModel").value.trim() || DEFAULT_MODELS[provider] || DEFAULT_API.model,
+    temperature: Number($("#apiTemp").value) || 0.8,
+    maxTokens: Math.max(64, Math.min(8192, Number($("#apiMaxTokens").value) || 1024)),
+  };
+  saveApi();
+  toast("API設定を保存しました");
+});
+
 // ---------- Character modal ----------
 const charModal = $("#charModal");
-const charModalTitle = $("#charModalTitle");
-const charName = $("#charName");
-const charPersona = $("#charPersona");
-const charTone = $("#charTone");
-const charGreeting = $("#charGreeting");
-const avatarPreview = $("#avatarPreview");
-const avatarFile = $("#avatarFile");
-
 let editingImage = "";
 
 function openCharModal(idx) {
   state.editingSlot = idx;
-  const ch = state.chars[idx];
+  const chat = currentChat();
+  const ch = chat.slots[idx];
   const isSelf = idx === 0;
-  charModalTitle.textContent = isSelf
-    ? "あなた (自分)の設定"
-    : `キャラクター ${idx} の設定`;
-  charName.value = ch.name || "";
-  charPersona.value = ch.persona || "";
-  charTone.value = ch.tone || "";
-  charGreeting.value = ch.greeting || "";
+  $("#charModalTitle").textContent = isSelf ? "あなた (自分) の設定" : `キャラクター ${idx} の設定`;
+  $("#charName").value = ch.name || "";
+  $("#charPersona").value = ch.persona || "";
+  $("#charTone").value = ch.tone || "";
+  $("#charGreeting").value = ch.greeting || "";
   editingImage = ch.image || "";
-  avatarPreview.style.backgroundImage = editingImage ? `url("${editingImage}")` : "";
+  updateAvatarPreview();
 
-  // Hide persona/tone/greeting for self slot
   $("#personaField").style.display = isSelf ? "none" : "";
   $("#toneField").style.display = isSelf ? "none" : "";
   $("#greetingField").style.display = isSelf ? "none" : "";
   $("#charDelete").style.display = isSelf ? "none" : "";
+  $("#presetControls").style.display = isSelf ? "none" : "";
 
   showModal(charModal);
-  charName.focus();
+  $("#charName").focus();
 }
 
-function saveCharFromModal() {
-  const idx = state.editingSlot;
-  if (idx == null) return;
-  const isSelf = idx === 0;
-  const newCh = {
-    name: charName.value.trim(),
-    image: editingImage,
-    persona: isSelf ? "" : charPersona.value.trim(),
-    tone: isSelf ? "" : charTone.value.trim(),
-    greeting: isSelf ? "" : charGreeting.value.trim(),
-    isSelf,
-  };
-  const prev = state.chars[idx];
-  state.chars[idx] = newCh;
-  saveChars();
-  renderSlots();
-  hideModal(charModal);
-
-  // If a brand-new NPC with a greeting, show it as an assistant message
-  if (!isSelf && newCh.greeting && !prev.greeting) {
-    pushMessage({ role: "assistant", name: newCh.name || `CH${idx}`, content: newCh.greeting });
+function updateAvatarPreview() {
+  const el = $("#avatarPreview");
+  if (editingImage) {
+    el.style.backgroundImage = `url("${editingImage}")`;
+  } else {
+    el.style.backgroundImage = "";
   }
 }
 
-function clearSlot() {
-  const idx = state.editingSlot;
-  if (idx == null || idx === 0) return;
-  state.chars[idx] = { ...EMPTY_CHAR(), isSelf: false };
-  state.selected.delete(idx);
-  saveChars();
-  renderSlots();
-  hideModal(charModal);
-}
-
-avatarFile.addEventListener("change", async (e) => {
+$("#avatarFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const dataUrl = await fileToResizedDataURL(file, 512);
-  editingImage = dataUrl;
-  avatarPreview.style.backgroundImage = `url("${dataUrl}")`;
-  avatarFile.value = "";
+  try {
+    editingImage = await fileToResizedDataURL(file, 512);
+    updateAvatarPreview();
+  } catch (err) {
+    toast("画像の読込に失敗しました");
+  }
+  e.target.value = "";
 });
-
 $("#avatarClear").addEventListener("click", () => {
   editingImage = "";
-  avatarPreview.style.backgroundImage = "";
+  updateAvatarPreview();
+});
+$("#charSave").addEventListener("click", () => {
+  const idx = state.editingSlot;
+  if (idx == null) return;
+  const chat = currentChat();
+  const isSelf = idx === 0;
+  const prev = chat.slots[idx];
+  const next = {
+    name: $("#charName").value.trim(),
+    image: editingImage,
+    persona: isSelf ? "" : $("#charPersona").value.trim(),
+    tone: isSelf ? "" : $("#charTone").value.trim(),
+    greeting: isSelf ? "" : $("#charGreeting").value.trim(),
+  };
+  chat.slots[idx] = next;
+  touchChat();
+  renderSlots();
+  hideModal(charModal);
+  // greeting auto-post if newly added
+  if (!isSelf && next.greeting && next.greeting !== prev.greeting && !chat.history.some((m) => m.content === next.greeting)) {
+    pushMessage({ role: "assistant", name: next.name || `CH${idx}`, content: next.greeting });
+  }
+});
+$("#charDelete").addEventListener("click", () => {
+  const idx = state.editingSlot;
+  if (idx == null || idx === 0) return;
+  const chat = currentChat();
+  chat.slots[idx] = EMPTY_CHAR();
+  chat.selectedIdxs = chat.selectedIdxs.filter((i) => i !== idx);
+  touchChat();
+  renderSlots();
+  hideModal(charModal);
 });
 
-$("#charSave").addEventListener("click", saveCharFromModal);
-$("#charDelete").addEventListener("click", clearSlot);
+// ---------- Preset picker / save ----------
+$("#btnLoadPreset").addEventListener("click", () => {
+  renderPresetPickerList();
+  showModal($("#presetPickerModal"));
+});
+$("#btnSavePreset").addEventListener("click", () => {
+  $("#savePresetName").value = $("#charName").value.trim() || "";
+  showModal($("#savePresetModal"));
+});
+$("#savePresetConfirm").addEventListener("click", () => {
+  const name = $("#savePresetName").value.trim();
+  if (!name) { toast("名前を入力してください"); return; }
+  const payload = {
+    name,
+    image: editingImage,
+    persona: $("#charPersona").value.trim(),
+    tone: $("#charTone").value.trim(),
+    greeting: $("#charGreeting").value.trim(),
+  };
+  const existing = state.presets.find((p) => p.name === name);
+  if (existing) {
+    Object.assign(existing, payload, { updatedAt: now() });
+  } else {
+    state.presets.push({ id: uid(), createdAt: now(), updatedAt: now(), ...payload });
+  }
+  savePresets();
+  hideModal($("#savePresetModal"));
+  toast(existing ? "上書き保存しました" : "プリセットに保存しました");
+});
+function renderPresetPickerList() {
+  const list = $("#presetPickerList");
+  list.innerHTML = "";
+  if (!state.presets.length) {
+    list.innerHTML = '<div class="list-empty">プリセットがありません。</div>';
+    return;
+  }
+  for (const p of state.presets) {
+    const card = document.createElement("div");
+    card.className = "preset-card";
+    const img = document.createElement("div");
+    img.className = "preset-card-img";
+    if (p.image) img.style.backgroundImage = `url("${p.image}")`;
+    else img.textContent = "🙂";
+    const name = document.createElement("div");
+    name.className = "preset-card-name";
+    name.textContent = p.name;
+    card.appendChild(img); card.appendChild(name);
+    card.addEventListener("click", () => {
+      $("#charName").value = p.name || "";
+      $("#charPersona").value = p.persona || "";
+      $("#charTone").value = p.tone || "";
+      $("#charGreeting").value = p.greeting || "";
+      editingImage = p.image || "";
+      updateAvatarPreview();
+      hideModal($("#presetPickerModal"));
+      toast("プリセットを読み込みました");
+    });
+    list.appendChild(card);
+  }
+}
 
+// ---------- Image resizer ----------
 function fileToResizedDataURL(file, maxSize) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -339,10 +659,8 @@ function fileToResizedDataURL(file, maxSize) {
         width = Math.round(width * scale);
         height = Math.round(height * scale);
         const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL("image/jpeg", 0.9));
       };
       img.src = reader.result;
@@ -351,69 +669,97 @@ function fileToResizedDataURL(file, maxSize) {
   });
 }
 
-// ---------- API modal ----------
-const apiModal = $("#apiModal");
-const apiProvider = $("#apiProvider");
-const apiKey = $("#apiKey");
-const apiBase = $("#apiBase");
-const apiModel = $("#apiModel");
-const apiTemp = $("#apiTemp");
-const apiMaxTokens = $("#apiMaxTokens");
-
-function openApiModal() {
-  apiProvider.value = state.api.provider;
-  apiKey.value = state.api.key;
-  apiBase.value = state.api.base;
-  apiModel.value = state.api.model;
-  apiTemp.value = state.api.temperature;
-  apiMaxTokens.value = state.api.maxTokens;
-  showModal(apiModal);
+// ---------- Chat meta modal ----------
+const chatMetaModal = $("#chatMetaModal");
+$("#btnChatMeta").addEventListener("click", openChatMetaModal);
+function openChatMetaModal() {
+  const c = currentChat();
+  if (!c) return;
+  $("#chatNameInput").value = c.name || "";
+  $("#chatSituation").value = c.situation || "";
+  $("#chatCarryover").value = c.carryover || "";
+  showModal(chatMetaModal);
 }
-
-$("#apiSave").addEventListener("click", () => {
-  const provider = apiProvider.value;
-  state.api = {
-    provider,
-    key: apiKey.value.trim(),
-    base: apiBase.value.trim(),
-    model: apiModel.value.trim() || DEFAULT_MODEL_BY_PROVIDER[provider] || DEFAULT_API.model,
-    temperature: Number(apiTemp.value) || 0.8,
-    maxTokens: Math.max(64, Math.min(8192, Number(apiMaxTokens.value) || 1024)),
-  };
-  saveApi();
-  hideModal(apiModal);
+$("#chatMetaSave").addEventListener("click", () => {
+  const c = currentChat();
+  if (!c) return;
+  c.name = $("#chatNameInput").value.trim() || c.name;
+  c.situation = $("#chatSituation").value.trim();
+  c.carryover = $("#chatCarryover").value.trim();
+  c.updatedAt = now();
+  saveChats();
+  hideModal(chatMetaModal);
+  renderTopbar();
+  toast("チャット設定を保存しました");
+});
+$("#chatDelete").addEventListener("click", () => {
+  const c = currentChat();
+  if (!c) return;
+  hideModal(chatMetaModal);
+  deleteChat(c.id);
 });
 
-apiProvider.addEventListener("change", () => {
-  const current = apiModel.value.trim();
-  const knownDefaults = Object.values(DEFAULT_MODEL_BY_PROVIDER);
-  if (!current || knownDefaults.includes(current)) {
-    apiModel.value = DEFAULT_MODEL_BY_PROVIDER[apiProvider.value] || "";
+// ---------- New chat modal ----------
+const newChatModal = $("#newChatModal");
+$("#btnNewChat").addEventListener("click", () => {
+  $("#newChatName").value = "";
+  $("#newChatSlotsSource").value = "current";
+  $("#newChatSituation").value = "";
+  $("#newChatCarryover").value = "";
+  showModal(newChatModal);
+  $("#newChatName").focus();
+});
+$("#btnFillCarryover").addEventListener("click", () => {
+  const c = currentChat();
+  if (!c || !c.history.length) { toast("引用できる履歴がありません"); return; }
+  const last = c.history.slice(-8)
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => {
+      if (m.role === "user") return `${c.slots[0].name || "自分"}: ${m.content}`;
+      return `${m.name || "assistant"}: ${m.content}`;
+    }).join("\n");
+  $("#newChatCarryover").value = last;
+});
+$("#newChatCreate").addEventListener("click", () => {
+  const cur = currentChat();
+  const name = $("#newChatName").value.trim() || "新しい会話";
+  const src = $("#newChatSlotsSource").value;
+  let slots;
+  if (src === "current" && cur) {
+    slots = cur.slots.map((s) => ({ ...s }));
+  } else {
+    slots = newSlots();
   }
+  const chat = makeChat({
+    name,
+    slots,
+    situation: $("#newChatSituation").value.trim(),
+    carryover: $("#newChatCarryover").value.trim(),
+  });
+  state.chats.push(chat);
+  setCurrentChat(chat.id);
+  saveChats();
+  hideModal(newChatModal);
+  hideModal(drawerEl);
+  renderAll();
+  toast("新しい会話を作成しました");
 });
 
-$("#btnApi").addEventListener("click", openApiModal);
-
-$("#btnClear").addEventListener("click", () => {
-  if (!state.history.length) return;
-  if (!confirm("会話履歴をすべて削除しますか？")) return;
-  state.history = [];
-  saveHistory();
-  renderMessages();
+// ---------- Modal close + esc ----------
+$$("[data-close]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const id = b.dataset.close;
+    const target = document.getElementById(id);
+    if (target) hideModal(target);
+  });
 });
-
-// Modal open/close helpers
-function showModal(el) { el.classList.remove("hidden"); }
-function hideModal(el) { el.classList.add("hidden"); }
-document.querySelectorAll("[data-close]").forEach((b) => {
-  b.addEventListener("click", () => hideModal(document.getElementById(b.dataset.close)));
-});
-document.querySelectorAll(".modal").forEach((m) => {
+$$(".modal").forEach((m) => {
   m.addEventListener("click", (e) => { if (e.target === m) hideModal(m); });
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    document.querySelectorAll(".modal:not(.hidden)").forEach(hideModal);
+    $$(".modal:not(.hidden)").forEach(hideModal);
+    if (!drawerEl.classList.contains("hidden")) hideModal(drawerEl);
   }
 });
 
@@ -428,137 +774,125 @@ inputEl.addEventListener("keydown", (e) => {
     composerEl.requestSubmit();
   }
 });
-
-composerEl.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  await onSend();
-});
+composerEl.addEventListener("submit", async (e) => { e.preventDefault(); await onSend(); });
 
 async function onSend() {
   if (state.sending) return;
   const text = inputEl.value.trim();
   if (!text) return;
-
-  if (state.selected.size === 0) {
-    pushMessage({ role: "system", content: "会話するキャラを下のスロットから選んでください。" });
+  const chat = currentChat();
+  if (!chat) return;
+  if (!chat.selectedIdxs.length) {
+    pushMessage({ role: "system", content: "下のスロットから会話するキャラを選んでください。" });
     return;
   }
   if (!state.api.key) {
-    pushMessage({ role: "system", content: "API キーが未設定です。右上の「⚙ API」から設定してください。" });
+    pushMessage({ role: "system", content: "API キーが未設定です。右上の「☰」→「⚙ API」から設定してください。" });
     return;
   }
-
   inputEl.value = "";
   inputEl.style.height = "auto";
   pushMessage({ role: "user", content: text });
 
-  // Add a typing placeholder
-  const typingMsg = { role: "assistant", name: "…", content: "考え中…", typing: true };
-  state.history.push(typingMsg);
-  appendMessageEl(typingMsg);
+  const typing = { role: "assistant", name: "…", content: "考え中…", typing: true };
+  chat.history.push(typing);
+  appendMessageEl(typing);
   scrollMessagesToBottom();
 
   state.sending = true;
   sendBtn.disabled = true;
   try {
     const reply = await callLLM();
-    // Remove typing placeholder
-    state.history.pop();
-    saveHistory();
+    chat.history.pop(); // remove typing
+    saveChats();
     renderMessages();
-
-    const parsed = parseAssistantReply(reply);
-    for (const m of parsed) {
-      pushMessage(m);
-    }
+    for (const m of parseReply(reply, chat)) pushMessage(m);
   } catch (err) {
-    state.history.pop(); // remove typing
-    saveHistory();
+    chat.history.pop();
+    saveChats();
     renderMessages();
-    pushMessage({ role: "error", content: "エラー: " + (err && err.message ? err.message : String(err)) });
+    pushMessage({ role: "error", content: "エラー: " + (err?.message || String(err)) });
   } finally {
     state.sending = false;
     sendBtn.disabled = false;
   }
 }
 
-// ---------- LLM ----------
+// ---------- Prompt builder ----------
 function buildSystemPrompt() {
-  const selected = [...state.selected].map((i) => ({ ...state.chars[i], idx: i }));
-  const self = state.chars[0];
-  const selfLine = self.name ? `ユーザーの名前は「${self.name}」。` : "";
+  const chat = currentChat();
+  const selected = chat.selectedIdxs.map((i) => ({ ...chat.slots[i], idx: i }));
+  const self = chat.slots[0];
+  const parts = [];
+
+  if (state.world.name || state.world.description) {
+    parts.push("# 世界観");
+    if (state.world.name) parts.push(`タイトル: ${state.world.name}`);
+    if (state.world.description) parts.push(state.world.description);
+  }
+  if (chat.situation) {
+    parts.push("# 今回のシチュエーション");
+    parts.push(chat.situation);
+  }
+  if (chat.carryover) {
+    parts.push("# 前回までの流れ");
+    parts.push(chat.carryover);
+  }
+
+  const selfLine = self.name ? `ユーザー (対話相手) の名前は「${self.name}」。` : "";
 
   if (selected.length === 1) {
     const c = selected[0];
-    return [
-      `あなたは以下のキャラクターとしてロールプレイしてください。`,
-      `# 名前: ${c.name || `CH${c.idx}`}`,
-      c.persona ? `# キャラクター設定:\n${c.persona}` : "",
-      c.tone ? `# 口調・話し方:\n${c.tone}` : "",
-      selfLine,
-      `常にこのキャラクターとして応答してください。ナレーションやメタ発言は避け、キャラの台詞のみを返してください。`,
-    ].filter(Boolean).join("\n\n");
+    parts.push("# 演じるキャラクター");
+    parts.push(`名前: ${c.name || `CH${c.idx}`}`);
+    if (c.persona) parts.push(`人格・背景:\n${c.persona}`);
+    if (c.tone) parts.push(`口調:\n${c.tone}`);
+    if (selfLine) parts.push(selfLine);
+    parts.push("常にこのキャラクターとして応答してください。ナレーションやメタ発言を避け、台詞のみを返してください。");
+  } else {
+    const blocks = selected.map((c) => {
+      const lines = [`## ${c.name || `CH${c.idx}`}`];
+      if (c.persona) lines.push(`設定: ${c.persona}`);
+      if (c.tone) lines.push(`口調: ${c.tone}`);
+      return lines.join("\n");
+    }).join("\n\n");
+    const names = selected.map((c) => c.name || `CH${c.idx}`).join(", ");
+    parts.push("# 演じるキャラクター (複数)");
+    parts.push(`以下の全員を同時に演じてください: ${names}`);
+    parts.push(blocks);
+    if (selfLine) parts.push(selfLine);
+    parts.push("# 応答ルール");
+    parts.push("- キャラごとの発言を次の形式で、1 行ずつ書いてください:\n  [キャラ名] 発言内容");
+    parts.push("- 1 ターンに 0 人〜全員まで自由に発言して構いません。話す必要のないキャラは行を省略。");
+    parts.push("- [キャラ名] の名前は上の表記と完全一致させてください。ナレーションやメタ発言は書かないでください。");
   }
-
-  // Multi-character roleplay
-  const charBlocks = selected.map((c) => {
-    const lines = [`## ${c.name || `CH${c.idx}`}`];
-    if (c.persona) lines.push(`設定: ${c.persona}`);
-    if (c.tone) lines.push(`口調: ${c.tone}`);
-    return lines.join("\n");
-  }).join("\n\n");
-
-  const namesList = selected.map((c) => c.name || `CH${c.idx}`).join(", ");
-
-  return [
-    `あなたは複数のキャラクターを同時に演じるロールプレイ役です。`,
-    `以下のキャラクター全員を演じてください: ${namesList}`,
-    ``,
-    `# キャラクター一覧`,
-    charBlocks,
-    ``,
-    selfLine,
-    `# 応答ルール`,
-    `- キャラごとの発言を必ず以下の形式で、一行ごとに書いてください:`,
-    `  [キャラ名] 発言内容`,
-    `- 1ターンで複数のキャラが発言しても構いません。会話が自然に流れるよう、0人〜全員が話せます。`,
-    `- 発言する必要がないキャラは行自体を省略してください。`,
-    `- [キャラ名] 部分にはカッコを含めて書き、キャラ名は上記の名前と完全一致させてください。`,
-    `- ナレーションやメタ発言は書かず、台詞のみを返してください。`,
-  ].filter(Boolean).join("\n");
+  return parts.join("\n\n");
 }
 
 function buildHistoryForAPI() {
-  // Strip system/error/typing; keep user/assistant only.
-  return state.history
+  const chat = currentChat();
+  return chat.history
     .filter((m) => (m.role === "user" || m.role === "assistant") && !m.typing)
     .map((m) => {
       if (m.role === "user") return { role: "user", content: m.content };
-      // assistant — prefix name if multi-character mode will be used, to preserve context
       const prefix = m.name ? `[${m.name}] ` : "";
       return { role: "assistant", content: prefix + m.content };
     });
 }
 
+// ---------- LLM providers ----------
 async function callLLM() {
-  const systemPrompt = buildSystemPrompt();
+  const system = buildSystemPrompt();
   const messages = buildHistoryForAPI();
-
-  if (state.api.provider === "gemini") {
-    return await callGemini(systemPrompt, messages);
-  }
-  if (state.api.provider === "anthropic") {
-    return await callAnthropic(systemPrompt, messages);
-  }
-  return await callOpenAI(systemPrompt, messages);
+  if (state.api.provider === "gemini") return await callGemini(system, messages);
+  if (state.api.provider === "anthropic") return await callAnthropic(system, messages);
+  return await callOpenAI(system, messages);
 }
 
 async function callGemini(system, messages) {
   const base = (state.api.base || "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, "");
   const model = encodeURIComponent(state.api.model);
   const url = `${base}/models/${model}:generateContent`;
-  // Gemini requires the first content to be role "user".
-  // Drop any leading assistant/model messages (e.g. greetings).
   const trimmed = [...messages];
   while (trimmed.length && trimmed[0].role !== "user") trimmed.shift();
   const body = {
@@ -567,29 +901,17 @@ async function callGemini(system, messages) {
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     })),
-    generationConfig: {
-      temperature: state.api.temperature,
-      maxOutputTokens: state.api.maxTokens,
-    },
+    generationConfig: { temperature: state.api.temperature, maxOutputTokens: state.api.maxTokens },
   };
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-goog-api-key": state.api.key,
-    },
+    headers: { "content-type": "application/json", "x-goog-api-key": state.api.key },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Gemini API ${res.status}: ${txt}`);
-  }
+  if (!res.ok) throw new Error(`Gemini API ${res.status}: ${await res.text()}`);
   const data = await res.json();
   const cand = data.candidates?.[0];
-  const text = (cand?.content?.parts || [])
-    .map((p) => p.text || "")
-    .join("")
-    .trim();
+  const text = (cand?.content?.parts || []).map((p) => p.text || "").join("").trim();
   if (!text && cand?.finishReason && cand.finishReason !== "STOP") {
     throw new Error(`Gemini 応答が空です (finishReason: ${cand.finishReason})`);
   }
@@ -597,18 +919,7 @@ async function callGemini(system, messages) {
 }
 
 async function callAnthropic(system, messages) {
-  const url = "https://api.anthropic.com/v1/messages";
-  const body = {
-    model: state.api.model,
-    max_tokens: state.api.maxTokens,
-    temperature: state.api.temperature,
-    system,
-    messages: messages.map((m) => ({
-      role: m.role,
-      content: [{ type: "text", text: m.content }],
-    })),
-  };
-  const res = await fetch(url, {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -616,118 +927,90 @@ async function callAnthropic(system, messages) {
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: state.api.model,
+      max_tokens: state.api.maxTokens,
+      temperature: state.api.temperature,
+      system,
+      messages: messages.map((m) => ({ role: m.role, content: [{ type: "text", text: m.content }] })),
+    }),
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Anthropic API ${res.status}: ${txt}`);
-  }
+  if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${await res.text()}`);
   const data = await res.json();
-  const text = (data.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
-  return text;
+  return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
 }
 
 async function callOpenAI(system, messages) {
   const base = (state.api.base || "https://api.openai.com/v1").replace(/\/$/, "");
-  const url = `${base}/chat/completions`;
-  const body = {
-    model: state.api.model,
-    temperature: state.api.temperature,
-    max_tokens: state.api.maxTokens,
-    messages: [
-      { role: "system", content: system },
-      ...messages,
-    ],
-  };
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "authorization": `Bearer ${state.api.key}`,
-    },
-    body: JSON.stringify(body),
+    headers: { "content-type": "application/json", "authorization": `Bearer ${state.api.key}` },
+    body: JSON.stringify({
+      model: state.api.model,
+      temperature: state.api.temperature,
+      max_tokens: state.api.maxTokens,
+      messages: [{ role: "system", content: system }, ...messages],
+    }),
   });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`OpenAI API ${res.status}: ${txt}`);
-  }
+  if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return (data.choices?.[0]?.message?.content || "").trim();
 }
 
-function parseAssistantReply(text) {
-  if (!text) return [{ role: "assistant", name: defaultSpeakerName(), content: "(無言)" }];
-
-  const selectedChars = [...state.selected].map((i) => state.chars[i]);
-  const known = selectedChars.map((c) => c.name).filter(Boolean);
-
-  // Single character: no parsing needed
-  if (selectedChars.length === 1) {
-    return [{ role: "assistant", name: selectedChars[0].name || `CH`, content: cleanLine(text) }];
+// ---------- Reply parser ----------
+function parseReply(text, chat) {
+  if (!text) return [{ role: "assistant", name: defaultSpeakerName(chat), content: "(無言)" }];
+  const selected = chat.selectedIdxs.map((i) => chat.slots[i]);
+  const known = selected.map((c) => c.name).filter(Boolean);
+  if (selected.length === 1) {
+    return [{ role: "assistant", name: selected[0].name || "CH", content: cleanLine(text) }];
   }
-
-  // Multi: parse [Name] ... lines
   const lines = text.split(/\r?\n/);
   const msgs = [];
-  let current = null;
+  let cur = null;
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line) {
-      if (current) current.content += "\n";
-      continue;
-    }
+    if (!line) { if (cur) cur.content += "\n"; continue; }
     const m = line.match(/^\[([^\]]+)\]\s*[:：]?\s*(.*)$/);
     if (m) {
-      if (current) msgs.push(current);
-      const name = resolveName(m[1].trim(), known);
-      current = { role: "assistant", name, content: m[2] || "" };
+      if (cur) msgs.push(cur);
+      cur = { role: "assistant", name: resolveName(m[1].trim(), known), content: m[2] || "" };
     } else {
-      if (current) {
-        current.content += (current.content ? "\n" : "") + line;
-      } else {
-        // No bracket prefix: attribute to first selected character
-        current = { role: "assistant", name: known[0] || "assistant", content: line };
-      }
+      if (cur) cur.content += (cur.content ? "\n" : "") + line;
+      else cur = { role: "assistant", name: known[0] || "assistant", content: line };
     }
   }
-  if (current) msgs.push(current);
-
-  return msgs
-    .map((m) => ({ ...m, content: m.content.trim() }))
-    .filter((m) => m.content.length > 0);
+  if (cur) msgs.push(cur);
+  return msgs.map((m) => ({ ...m, content: m.content.trim() })).filter((m) => m.content.length > 0);
 }
-
 function resolveName(name, known) {
   if (known.includes(name)) return name;
-  // Try loose match
   const hit = known.find((n) => n && (name.includes(n) || n.includes(name)));
   return hit || name;
 }
-
-function defaultSpeakerName() {
-  const first = [...state.selected][0];
+function defaultSpeakerName(chat) {
+  const first = chat.selectedIdxs[0];
   if (first == null) return "assistant";
-  return state.chars[first].name || `CH${first}`;
+  return chat.slots[first]?.name || `CH${first}`;
 }
-
 function cleanLine(text) {
-  // Strip a leading [Name] prefix if the model added one in single-char mode
   return text.replace(/^\s*\[[^\]]+\]\s*[:：]?\s*/, "").trim();
 }
 
 // ---------- Init ----------
-function init() {
+function renderAll() {
+  renderTopbar();
   renderSlots();
   renderMessages();
+}
+
+function init() {
+  loadAll();
+  renderAll();
   if (!state.api.key) {
-    // Show a subtle hint
     pushMessage({
       role: "system",
-      content: "はじめに右上の「⚙ API」から LLM の API キーを設定してください。次にキャラを 1 つ以上設定し、そのキャラをクリックして会話を始めます。",
+      content: "最初に右上「☰」→「⚙ API」から API キーを設定してください。続いて下のスロットでキャラを作成し、選択して会話を始めます。",
     });
   }
 }

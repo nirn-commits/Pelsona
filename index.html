@@ -7,31 +7,127 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1 class="title">Pelsona</h1>
-    <div class="topbar-actions">
-      <span id="activeLabel" class="active-label">キャラ未選択</span>
-      <button id="btnApi" class="btn btn-ghost" title="API設定">⚙ API</button>
-      <button id="btnClear" class="btn btn-ghost" title="会話履歴をクリア">🗑 履歴</button>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 class="brand">Pelsona</h1>
+        <button id="btnChatMeta" class="chat-label" title="チャット設定">
+          <span id="chatNameLabel">新しい会話</span>
+          <span class="chat-edit-icon">✎</span>
+        </button>
+      </div>
+      <div class="topbar-right">
+        <span id="activeLabel" class="active-label"></span>
+        <button id="btnMenu" class="icon-btn-lg" title="メニュー">☰</button>
+      </div>
+    </header>
+
+    <main id="chatArea" class="chat-area">
+      <div id="messages" class="messages"></div>
+      <div id="placeholder" class="placeholder">
+        <div class="placeholder-inner">
+          <div class="placeholder-icon">💬</div>
+          <p class="placeholder-title">キャラを選んで会話を始めよう</p>
+          <p class="placeholder-sub">下のスロットをクリックしてキャラを設定・選択します。複数選ぶとグループ会話になります。</p>
+        </div>
+      </div>
+    </main>
+
+    <form id="composer" class="composer">
+      <textarea id="input" placeholder="メッセージを入力 (Shift+Enter で改行)" rows="1"></textarea>
+      <button id="btnSend" type="submit" class="btn btn-primary btn-send" title="送信">
+        <span class="send-icon">➤</span>
+      </button>
+    </form>
+
+    <section class="slot-bar" id="slotBar"></section>
+  </div>
+
+  <!-- Drawer -->
+  <div id="drawer" class="drawer hidden" role="dialog" aria-modal="true">
+    <div class="drawer-panel">
+      <div class="drawer-header">
+        <h2 class="drawer-title">メニュー</h2>
+        <button class="icon-btn" data-close="drawer" aria-label="閉じる">✕</button>
+      </div>
+      <div class="drawer-tabs">
+        <button class="drawer-tab active" data-tab="chats">💬 チャット</button>
+        <button class="drawer-tab" data-tab="presets">📚 キャラ</button>
+        <button class="drawer-tab" data-tab="world">🌍 世界観</button>
+        <button class="drawer-tab" data-tab="api">⚙ API</button>
+      </div>
+
+      <div class="drawer-body">
+        <!-- Chats tab -->
+        <section class="drawer-section active" data-panel="chats">
+          <div class="drawer-toolbar">
+            <button id="btnNewChat" class="btn btn-primary">＋ 新しい会話</button>
+          </div>
+          <div id="chatList" class="list"></div>
+        </section>
+
+        <!-- Presets tab -->
+        <section class="drawer-section" data-panel="presets">
+          <p class="hint">キャラ編集画面の「プリセットに保存」ボタンで登録できます。</p>
+          <div id="presetList" class="list"></div>
+        </section>
+
+        <!-- World tab -->
+        <section class="drawer-section" data-panel="world">
+          <p class="hint">世界観は全チャットで共通のシステム設定として挿入されます。</p>
+          <label class="field">
+            <span>世界観のタイトル</span>
+            <input type="text" id="worldName" placeholder="例: 剣と魔法の異世界" />
+          </label>
+          <label class="field">
+            <span>世界観の説明</span>
+            <textarea id="worldDescription" rows="10" placeholder="例: 200年前の大戦で魔王が封印された世界。主人公は異世界から召喚された..."></textarea>
+          </label>
+          <div class="drawer-actions">
+            <button id="btnSaveWorld" class="btn btn-primary">保存</button>
+          </div>
+        </section>
+
+        <!-- API tab -->
+        <section class="drawer-section" data-panel="api">
+          <label class="field">
+            <span>プロバイダ</span>
+            <select id="apiProvider">
+              <option value="gemini">Google Gemini</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openai">OpenAI 互換</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>API キー</span>
+            <input type="password" id="apiKey" placeholder="sk-... / AIza..." autocomplete="off" />
+            <small class="hint">キーはこのブラウザの localStorage にのみ保存されます。</small>
+          </label>
+          <label class="field">
+            <span>エンドポイント (任意・OpenAI互換のみ)</span>
+            <input type="text" id="apiBase" placeholder="例: https://api.openai.com/v1" />
+          </label>
+          <label class="field">
+            <span>モデル名</span>
+            <input type="text" id="apiModel" placeholder="gemini-2.5-flash / claude-opus-4-7 / gpt-4o-mini" />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>Temperature</span>
+              <input type="number" id="apiTemp" min="0" max="2" step="0.1" value="0.8" />
+            </label>
+            <label class="field">
+              <span>最大トークン</span>
+              <input type="number" id="apiMaxTokens" min="64" max="8192" step="64" value="1024" />
+            </label>
+          </div>
+          <div class="drawer-actions">
+            <button id="apiSave" class="btn btn-primary">保存</button>
+          </div>
+        </section>
+      </div>
     </div>
-  </header>
-
-  <main id="chatArea" class="chat-area">
-    <div id="messages" class="messages"></div>
-    <div id="placeholder" class="placeholder">
-      <p>右側のキャラをクリックして会話を始めてください。</p>
-      <p class="placeholder-sub">複数キャラを選ぶとグループ会話になります。</p>
-    </div>
-  </main>
-
-  <form id="composer" class="composer">
-    <textarea id="input" placeholder="メッセージを入力 (Shift+Enter で改行)" rows="1"></textarea>
-    <button id="btnSend" type="submit" class="btn btn-send">送信</button>
-  </form>
-
-  <section class="slot-bar" id="slotBar">
-    <!-- slots injected by JS -->
-  </section>
+  </div>
 
   <!-- Character edit modal -->
   <div id="charModal" class="modal hidden" role="dialog" aria-modal="true">
@@ -42,15 +138,23 @@
       </div>
       <div class="modal-body">
         <div class="avatar-edit">
-          <div class="avatar-preview" id="avatarPreview"></div>
+          <div class="avatar-preview" id="avatarPreview">
+            <span class="avatar-preview-placeholder">🖼</span>
+          </div>
           <div class="avatar-controls">
-            <label class="btn btn-secondary">
+            <label class="btn btn-secondary btn-block">
               画像を選択
               <input type="file" id="avatarFile" accept="image/*" hidden />
             </label>
-            <button type="button" id="avatarClear" class="btn btn-ghost">画像削除</button>
+            <button type="button" id="avatarClear" class="btn btn-ghost btn-block">画像削除</button>
           </div>
         </div>
+
+        <div class="preset-controls" id="presetControls">
+          <button type="button" id="btnLoadPreset" class="btn btn-secondary">📚 プリセットから読込</button>
+          <button type="button" id="btnSavePreset" class="btn btn-secondary">💾 プリセットに保存</button>
+        </div>
+
         <label class="field">
           <span>名前</span>
           <input type="text" id="charName" maxlength="40" placeholder="キャラ名" />
@@ -78,53 +182,118 @@
     </div>
   </div>
 
-  <!-- API settings modal -->
-  <div id="apiModal" class="modal hidden" role="dialog" aria-modal="true">
+  <!-- Chat meta modal -->
+  <div id="chatMetaModal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
       <div class="modal-header">
-        <h2>API 設定</h2>
-        <button class="icon-btn" data-close="apiModal" aria-label="閉じる">✕</button>
+        <h2>チャット設定</h2>
+        <button class="icon-btn" data-close="chatMetaModal" aria-label="閉じる">✕</button>
       </div>
       <div class="modal-body">
         <label class="field">
-          <span>プロバイダ</span>
-          <select id="apiProvider">
-            <option value="gemini">Google Gemini</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="openai">OpenAI 互換 (OpenAI / LM Studio / Ollama 等)</option>
+          <span>チャット名</span>
+          <input type="text" id="chatNameInput" maxlength="60" />
+        </label>
+        <label class="field">
+          <span>シチュエーション設定 (このチャットだけの状況)</span>
+          <textarea id="chatSituation" rows="6" placeholder="例: 酒場で偶然出会った場面。夜更けで人気は少ない。主人公は疲れた様子で席に座る。"></textarea>
+          <small class="hint">今回のチャットでのみ機能する場面・状況を書きます。</small>
+        </label>
+        <label class="field">
+          <span>引き継ぎメモ (前回までのあらすじ)</span>
+          <textarea id="chatCarryover" rows="6" placeholder="例: 前回、主人公とアリアは森の洞窟で怪物と戦い、撃退した。彼らは街へ戻る道中..."></textarea>
+          <small class="hint">別チャットから話の流れを継承したいときに書きます。システムプロンプトに含まれます。</small>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="chatDelete" class="btn btn-danger">このチャットを削除</button>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" data-close="chatMetaModal">キャンセル</button>
+          <button type="button" id="chatMetaSave" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New chat modal -->
+  <div id="newChatModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>新しい会話</h2>
+        <button class="icon-btn" data-close="newChatModal" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>チャット名</span>
+          <input type="text" id="newChatName" placeholder="例: 森の奥での邂逅" />
+        </label>
+        <label class="field">
+          <span>キャラ構成</span>
+          <select id="newChatSlotsSource">
+            <option value="current">現在のスロットを引き継ぐ</option>
+            <option value="empty">空の状態から始める</option>
           </select>
         </label>
         <label class="field">
-          <span>API キー</span>
-          <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
-          <small class="hint">キーはこのブラウザの localStorage にのみ保存されます。</small>
+          <span>シチュエーション (このチャット用)</span>
+          <textarea id="newChatSituation" rows="4" placeholder="このチャット限定の場面・状況"></textarea>
         </label>
         <label class="field">
-          <span>エンドポイント (任意・OpenAI互換の時のみ)</span>
-          <input type="text" id="apiBase" placeholder="例: https://api.openai.com/v1" />
-        </label>
-        <label class="field">
-          <span>モデル名</span>
-          <input type="text" id="apiModel" placeholder="gemini-2.5-flash / claude-opus-4-7 / gpt-4o-mini など" />
-        </label>
-        <label class="field">
-          <span>Temperature</span>
-          <input type="number" id="apiTemp" min="0" max="2" step="0.1" value="0.8" />
-        </label>
-        <label class="field">
-          <span>最大トークン</span>
-          <input type="number" id="apiMaxTokens" min="64" max="8192" step="64" value="1024" />
+          <span>引き継ぎメモ (任意)</span>
+          <textarea id="newChatCarryover" rows="4" placeholder="前の会話から引き継ぎたい流れ"></textarea>
+          <button type="button" id="btnFillCarryover" class="btn btn-ghost btn-small">現在の会話の末尾を引用</button>
         </label>
       </div>
       <div class="modal-footer">
         <div></div>
         <div class="modal-footer-right">
-          <button type="button" class="btn btn-ghost" data-close="apiModal">キャンセル</button>
-          <button type="button" id="apiSave" class="btn btn-primary">保存</button>
+          <button type="button" class="btn btn-ghost" data-close="newChatModal">キャンセル</button>
+          <button type="button" id="newChatCreate" class="btn btn-primary">作成</button>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- Preset picker modal -->
+  <div id="presetPickerModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>プリセットから読込</h2>
+        <button class="icon-btn" data-close="presetPickerModal" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">クリックすると現在編集中のスロットに読み込みます。</p>
+        <div id="presetPickerList" class="preset-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save preset modal -->
+  <div id="savePresetModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>プリセットに保存</h2>
+        <button class="icon-btn" data-close="savePresetModal" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>プリセット名</span>
+          <input type="text" id="savePresetName" maxlength="40" />
+          <small class="hint">同名のプリセットがあれば上書きされます。</small>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" data-close="savePresetModal">キャンセル</button>
+          <button type="button" id="savePresetConfirm" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
 
   <script src="app.js"></script>
 </body>
