@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pelsona - キャラクターチャット</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="title">Pelsona</h1>
+    <div class="topbar-actions">
+      <span id="activeLabel" class="active-label">キャラ未選択</span>
+      <button id="btnApi" class="btn btn-ghost" title="API設定">⚙ API</button>
+      <button id="btnClear" class="btn btn-ghost" title="会話履歴をクリア">🗑 履歴</button>
+    </div>
+  </header>
+
+  <main id="chatArea" class="chat-area">
+    <div id="messages" class="messages"></div>
+    <div id="placeholder" class="placeholder">
+      <p>右側のキャラをクリックして会話を始めてください。</p>
+      <p class="placeholder-sub">複数キャラを選ぶとグループ会話になります。</p>
+    </div>
+  </main>
+
+  <form id="composer" class="composer">
+    <textarea id="input" placeholder="メッセージを入力 (Shift+Enter で改行)" rows="1"></textarea>
+    <button id="btnSend" type="submit" class="btn btn-send">送信</button>
+  </form>
+
+  <section class="slot-bar" id="slotBar">
+    <!-- slots injected by JS -->
+  </section>
+
+  <!-- Character edit modal -->
+  <div id="charModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="charModalTitle">キャラクター設定</h2>
+        <button class="icon-btn" data-close="charModal" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="avatar-edit">
+          <div class="avatar-preview" id="avatarPreview"></div>
+          <div class="avatar-controls">
+            <label class="btn btn-secondary">
+              画像を選択
+              <input type="file" id="avatarFile" accept="image/*" hidden />
+            </label>
+            <button type="button" id="avatarClear" class="btn btn-ghost">画像削除</button>
+          </div>
+        </div>
+        <label class="field">
+          <span>名前</span>
+          <input type="text" id="charName" maxlength="40" placeholder="キャラ名" />
+        </label>
+        <label class="field" id="personaField">
+          <span>キャラ設定 (人格・背景・性格など)</span>
+          <textarea id="charPersona" rows="4" placeholder="例: クールで知的な探偵。皮肉屋だが情に厚い。"></textarea>
+        </label>
+        <label class="field" id="toneField">
+          <span>口調 (話し方の特徴)</span>
+          <textarea id="charTone" rows="3" placeholder="例: 一人称は「僕」。語尾に「〜だよ」を使う。敬語は使わない。"></textarea>
+        </label>
+        <label class="field" id="greetingField">
+          <span>最初の一言 (任意)</span>
+          <input type="text" id="charGreeting" placeholder="例: やあ、今日はどんな依頼だい？" />
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="charDelete" class="btn btn-danger">枠を空にする</button>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" data-close="charModal">キャンセル</button>
+          <button type="button" id="charSave" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- API settings modal -->
+  <div id="apiModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>API 設定</h2>
+        <button class="icon-btn" data-close="apiModal" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>プロバイダ</span>
+          <select id="apiProvider">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai">OpenAI 互換 (OpenAI / LM Studio / Ollama 等)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>API キー</span>
+          <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
+          <small class="hint">キーはこのブラウザの localStorage にのみ保存されます。</small>
+        </label>
+        <label class="field">
+          <span>エンドポイント (任意・OpenAI互換の時のみ)</span>
+          <input type="text" id="apiBase" placeholder="https://api.openai.com/v1" />
+        </label>
+        <label class="field">
+          <span>モデル名</span>
+          <input type="text" id="apiModel" placeholder="claude-opus-4-7 / gpt-4o-mini など" />
+        </label>
+        <label class="field">
+          <span>Temperature</span>
+          <input type="number" id="apiTemp" min="0" max="2" step="0.1" value="0.8" />
+        </label>
+        <label class="field">
+          <span>最大トークン</span>
+          <input type="number" id="apiMaxTokens" min="64" max="8192" step="64" value="1024" />
+        </label>
+      </div>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" data-close="apiModal">キャンセル</button>
+          <button type="button" id="apiSave" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
