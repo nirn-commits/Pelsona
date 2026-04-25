@@ -75,7 +75,10 @@ const state = {
   editingSlot: null,
   sending: false,
   drawerTab: "chats",
+  narrationMode: false,
 };
+const NARRATION_TAGS = /^(地の文|narration|narrator|描写|ナレーション)$/i;
+const NARRATION_LABEL = "地の文";
 function currentChat() {
   return state.chats.find((c) => c.id === state.currentChatId) || state.chats[0];
 }
@@ -274,8 +277,9 @@ function appendMessageEl(m) {
   if (m.role === "user") wrap.classList.add("me");
   if (m.role === "system") wrap.classList.add("system");
   if (m.role === "error") wrap.classList.add("error");
+  if (m.narration) wrap.classList.add("narration");
 
-  if (m.role !== "system" && m.role !== "error") {
+  if (m.role !== "system" && m.role !== "error" && !m.narration) {
     const avatar = document.createElement("div");
     avatar.className = "avatar";
     const ch = findCharFor(m, chat);
@@ -291,7 +295,8 @@ function appendMessageEl(m) {
   body.className = "msg-body";
   const name = document.createElement("div");
   name.className = "name";
-  if (m.role === "user") name.textContent = (chat?.slots[0].name) || "自分";
+  if (m.narration) name.textContent = NARRATION_LABEL;
+  else if (m.role === "user") name.textContent = (chat?.slots[0].name) || "自分";
   else if (m.role === "assistant") name.textContent = m.name || "assistant";
   if (name.textContent) body.appendChild(name);
 
@@ -521,7 +526,7 @@ function openCharModal(idx) {
   $("#toneField").style.display = isSelf ? "none" : "";
   $("#greetingField").style.display = isSelf ? "none" : "";
   $("#charDelete").style.display = isSelf ? "none" : "";
-  $("#presetControls").style.display = isSelf ? "none" : "";
+  $("#presetControls").style.display = ""; // self も含め常に表示
 
   showModal(charModal);
   $("#charName").focus();
@@ -764,6 +769,21 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------- Composer ----------
+const modeBtn = $("#btnMode");
+function updateModeUI() {
+  modeBtn.textContent = state.narrationMode ? "📖" : "💬";
+  modeBtn.classList.toggle("narration", state.narrationMode);
+  inputEl.placeholder = state.narrationMode
+    ? "地の文を入力 (場面や状況を書き、キャラを動かします)"
+    : "メッセージを入力 (Shift+Enter で改行)";
+}
+modeBtn.addEventListener("click", () => {
+  state.narrationMode = !state.narrationMode;
+  updateModeUI();
+  inputEl.focus();
+});
+updateModeUI();
+
 inputEl.addEventListener("input", () => {
   inputEl.style.height = "auto";
   inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + "px";
@@ -792,7 +812,10 @@ async function onSend() {
   }
   inputEl.value = "";
   inputEl.style.height = "auto";
-  pushMessage({ role: "user", content: text });
+  const userMsg = state.narrationMode
+    ? { role: "user", content: text, narration: true }
+    : { role: "user", content: text };
+  pushMessage(userMsg);
 
   const typing = { role: "assistant", name: "…", content: "考え中…", typing: true };
   chat.history.push(typing);
@@ -848,7 +871,12 @@ function buildSystemPrompt() {
     if (c.persona) parts.push(`人格・背景:\n${c.persona}`);
     if (c.tone) parts.push(`口調:\n${c.tone}`);
     if (selfLine) parts.push(selfLine);
-    parts.push("常にこのキャラクターとして応答してください。ナレーションやメタ発言を避け、台詞のみを返してください。");
+    parts.push("# 応答ルール");
+    parts.push(`- 台詞は原則プレフィックスなしで書きます。
+- 場面描写・情景・状況の変化など、キャラの台詞でないものは必ず次の形式で書いてください:
+  [${NARRATION_LABEL}] 描写内容
+- 1ターンに台詞と地の文を混在させて構いません (各行ごと)。
+- メタ発言 (作者視点のコメント等) は書かないでください。`);
   } else {
     const blocks = selected.map((c) => {
       const lines = [`## ${c.name || `CH${c.idx}`}`];
@@ -862,9 +890,12 @@ function buildSystemPrompt() {
     parts.push(blocks);
     if (selfLine) parts.push(selfLine);
     parts.push("# 応答ルール");
-    parts.push("- キャラごとの発言を次の形式で、1 行ずつ書いてください:\n  [キャラ名] 発言内容");
-    parts.push("- 1 ターンに 0 人〜全員まで自由に発言して構いません。話す必要のないキャラは行を省略。");
-    parts.push("- [キャラ名] の名前は上の表記と完全一致させてください。ナレーションやメタ発言は書かないでください。");
+    parts.push(`- 各発言は次の形式で、1行ずつ書いてください:
+  [キャラ名] 発言内容
+- 場面描写・情景・状況変化は次の形式で書いてください:
+  [${NARRATION_LABEL}] 描写内容
+- 1ターンに 0 人〜全員まで自由に発言・地の文を混在できます。話す必要のないキャラは行を省略。
+- [キャラ名] の名前は上の表記と完全一致させてください。メタ発言は書かないでください。`);
   }
   return parts.join("\n\n");
 }
@@ -874,8 +905,12 @@ function buildHistoryForAPI() {
   return chat.history
     .filter((m) => (m.role === "user" || m.role === "assistant") && !m.typing)
     .map((m) => {
-      if (m.role === "user") return { role: "user", content: m.content };
-      const prefix = m.name ? `[${m.name}] ` : "";
+      if (m.role === "user") {
+        const content = m.narration ? `[${NARRATION_LABEL}] ${m.content}` : m.content;
+        return { role: "user", content };
+      }
+      const name = m.narration ? NARRATION_LABEL : (m.name || "");
+      const prefix = name ? `[${name}] ` : "";
       return { role: "assistant", content: prefix + m.content };
     });
 }
@@ -962,25 +997,31 @@ function parseReply(text, chat) {
   if (!text) return [{ role: "assistant", name: defaultSpeakerName(chat), content: "(無言)" }];
   const selected = chat.selectedIdxs.map((i) => chat.slots[i]);
   const known = selected.map((c) => c.name).filter(Boolean);
-  if (selected.length === 1) {
-    return [{ role: "assistant", name: selected[0].name || "CH", content: cleanLine(text) }];
-  }
+  const defaultName = selected.length === 1 ? (selected[0].name || "CH") : (known[0] || "assistant");
+
   const lines = text.split(/\r?\n/);
   const msgs = [];
   let cur = null;
+  const flush = () => { if (cur) { msgs.push(cur); cur = null; } };
+
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) { if (cur) cur.content += "\n"; continue; }
     const m = line.match(/^\[([^\]]+)\]\s*[:：]?\s*(.*)$/);
     if (m) {
-      if (cur) msgs.push(cur);
-      cur = { role: "assistant", name: resolveName(m[1].trim(), known), content: m[2] || "" };
+      flush();
+      const rawName = m[1].trim();
+      if (NARRATION_TAGS.test(rawName)) {
+        cur = { role: "assistant", name: NARRATION_LABEL, narration: true, content: m[2] || "" };
+      } else {
+        cur = { role: "assistant", name: resolveName(rawName, known), content: m[2] || "" };
+      }
     } else {
       if (cur) cur.content += (cur.content ? "\n" : "") + line;
-      else cur = { role: "assistant", name: known[0] || "assistant", content: line };
+      else cur = { role: "assistant", name: defaultName, content: line };
     }
   }
-  if (cur) msgs.push(cur);
+  flush();
   return msgs.map((m) => ({ ...m, content: m.content.trim() })).filter((m) => m.content.length > 0);
 }
 function resolveName(name, known) {
@@ -992,9 +1033,6 @@ function defaultSpeakerName(chat) {
   const first = chat.selectedIdxs[0];
   if (first == null) return "assistant";
   return chat.slots[first]?.name || `CH${first}`;
-}
-function cleanLine(text) {
-  return text.replace(/^\s*\[[^\]]+\]\s*[:：]?\s*/, "").trim();
 }
 
 // ---------- Init ----------

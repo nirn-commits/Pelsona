@@ -252,6 +252,55 @@ body { display: block; }
 }
 .send-icon { transform: translateX(1px); font-size: 14px; }
 
+.mode-toggle {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+.mode-toggle:hover { background: var(--bg-3); border-color: var(--border-strong); }
+.mode-toggle.narration {
+  background: rgba(167, 139, 250, 0.15);
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+/* Narration messages (centered, italic, no avatar) */
+.msg.narration {
+  align-self: center;
+  max-width: 88%;
+  flex-direction: column;
+  align-items: stretch;
+}
+.msg.narration .avatar { display: none; }
+.msg.narration .name {
+  text-align: center;
+  color: var(--accent-2);
+  letter-spacing: 0.1em;
+  font-size: 10px;
+}
+.msg.narration .bubble {
+  background: transparent;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  color: #d4c5ff;
+  font-style: italic;
+  text-align: center;
+  padding: 10px 16px;
+  border-radius: 10px;
+}
+.msg.me.narration .bubble {
+  background: rgba(167, 139, 250, 0.08);
+}
+
 /* ---------- Slot bar ---------- */
 .slot-bar {
   display: grid;
