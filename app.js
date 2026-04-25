@@ -822,9 +822,16 @@ ${transcript}
 
 あらすじ:`;
   const messages = [{ role: "user", content: user }];
-  if (state.api.provider === "gemini") return await callGemini(system, messages);
-  if (state.api.provider === "anthropic") return await callAnthropic(system, messages);
-  return await callOpenAI(system, messages);
+  // あらすじは打ち切られないよう、ユーザー設定に関わらず十分なトークン数を確保
+  const prevMax = state.api.maxTokens;
+  state.api.maxTokens = Math.max(prevMax, 4096);
+  try {
+    if (state.api.provider === "gemini") return await callGemini(system, messages);
+    if (state.api.provider === "anthropic") return await callAnthropic(system, messages);
+    return await callOpenAI(system, messages);
+  } finally {
+    state.api.maxTokens = prevMax;
+  }
 }
 
 async function runSummaryInto(targetTextareaId, btn) {
