@@ -61,9 +61,17 @@ function makeChat(opts = {}) {
     selectedIdxs: opts.selectedIdxs || [],
     situation: opts.situation || "",
     carryover: opts.carryover || "",
+    responseLength: opts.responseLength || "normal",
     history: opts.history || [],
   };
 }
+
+const LENGTH_INSTR = {
+  short: "応答は簡潔に。各キャラの台詞は1〜2文程度に抑え、地の文も最小限にしてください。",
+  normal: "",
+  long: "情景描写・心情描写を豊かにし、各キャラの台詞も複数文で深く描いてください。",
+  very_long: "可能な限り詳細に、情景・心情・所作を丁寧に描写し、長文で応答してください。",
+};
 
 // ---------- State ----------
 const state = {
@@ -268,7 +276,77 @@ function renderMessages() {
     placeholderEl.style.display = "none";
     for (const m of chat.history) appendMessageEl(m);
   }
+  renderRegenerateRow();
   scrollMessagesToBottom();
+}
+
+function renderRegenerateRow() {
+  const existing = $("#regenRow");
+  if (existing) existing.remove();
+  const chat = currentChat();
+  if (!chat || chat.history.length === 0) return;
+  // 末尾に typing 以外の assistant 群があり、その前に user メッセージがあれば再生成可能
+  const last = chat.history[chat.history.length - 1];
+  if (!last || last.role !== "assistant" || last.typing) return;
+  const hasUserBefore = chat.history.some((m) => m.role === "user");
+  if (!hasUserBefore) return;
+  const row = document.createElement("div");
+  row.id = "regenRow";
+  row.className = "regen-row";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-ghost btn-small";
+  btn.textContent = "🔄 再生成";
+  btn.title = "直前の応答を作り直す";
+  btn.addEventListener("click", regenerateLast);
+  row.appendChild(btn);
+  messagesEl.appendChild(row);
+}
+
+async function regenerateLast() {
+  if (state.sending) return;
+  const chat = currentChat();
+  if (!chat) return;
+  // 末尾の連続する assistant メッセージを取り除く (typing は無視)
+  while (chat.history.length) {
+    const t = chat.history[chat.history.length - 1];
+    if (t.role === "assistant" && !t.typing) chat.history.pop();
+    else break;
+  }
+  saveChats();
+  renderMessages();
+
+  if (!chat.selectedIdxs.length) {
+    pushMessage({ role: "system", content: "キャラ選択が解除されているため再生成できません。" });
+    return;
+  }
+  if (!state.api.key) {
+    pushMessage({ role: "system", content: "API キーが未設定です。" });
+    return;
+  }
+
+  const typing = { role: "assistant", name: "…", content: "考え中…", typing: true };
+  chat.history.push(typing);
+  appendMessageEl(typing);
+  scrollMessagesToBottom();
+
+  state.sending = true;
+  sendBtn.disabled = true;
+  try {
+    const reply = await callLLM();
+    chat.history.pop();
+    saveChats();
+    renderMessages();
+    for (const m of parseReply(reply, chat)) pushMessage(m);
+  } catch (err) {
+    chat.history.pop();
+    saveChats();
+    renderMessages();
+    pushMessage({ role: "error", content: "エラー: " + (err?.message || String(err)) });
+  } finally {
+    state.sending = false;
+    sendBtn.disabled = false;
+  }
 }
 function appendMessageEl(m) {
   const chat = currentChat();
@@ -327,6 +405,7 @@ function pushMessage(m) {
   touchChat();
   appendMessageEl(m);
   placeholderEl.style.display = "none";
+  renderRegenerateRow();
   scrollMessagesToBottom();
 }
 
@@ -681,6 +760,7 @@ function openChatMetaModal() {
   const c = currentChat();
   if (!c) return;
   $("#chatNameInput").value = c.name || "";
+  $("#chatLength").value = c.responseLength || "normal";
   $("#chatSituation").value = c.situation || "";
   $("#chatCarryover").value = c.carryover || "";
   showModal(chatMetaModal);
@@ -689,6 +769,7 @@ $("#chatMetaSave").addEventListener("click", () => {
   const c = currentChat();
   if (!c) return;
   c.name = $("#chatNameInput").value.trim() || c.name;
+  c.responseLength = $("#chatLength").value || "normal";
   c.situation = $("#chatSituation").value.trim();
   c.carryover = $("#chatCarryover").value.trim();
   c.updatedAt = now();
@@ -864,38 +945,46 @@ function buildSystemPrompt() {
 
   const selfLine = self.name ? `ユーザー (対話相手) の名前は「${self.name}」。` : "";
 
+  const charName = (c) => c.name || `CH${c.idx}`;
   if (selected.length === 1) {
     const c = selected[0];
     parts.push("# 演じるキャラクター");
-    parts.push(`名前: ${c.name || `CH${c.idx}`}`);
+    parts.push(`名前: ${charName(c)}`);
     if (c.persona) parts.push(`人格・背景:\n${c.persona}`);
     if (c.tone) parts.push(`口調:\n${c.tone}`);
     if (selfLine) parts.push(selfLine);
-    parts.push("# 応答ルール");
-    parts.push(`- 台詞は原則プレフィックスなしで書きます。
-- 場面描写・情景・状況の変化など、キャラの台詞でないものは必ず次の形式で書いてください:
-  [${NARRATION_LABEL}] 描写内容
-- 1ターンに台詞と地の文を混在させて構いません (各行ごと)。
-- メタ発言 (作者視点のコメント等) は書かないでください。`);
+    parts.push("# 出力フォーマット (厳守)");
+    parts.push(`- 出力はブロックの集合とする。各ブロックは "[ラベル] 本文" の形式で必ず先頭に [ラベル] を置く。
+- 使えるラベルは以下の2種類のみ:
+  [${charName(c)}] … このキャラの発言・所作・心の声
+  [${NARRATION_LABEL}] … 場面描写・情景・状況変化など、キャラの台詞や所作以外
+- 1ブロックに1ラベル。1ブロック内には1キャラの内容のみ。複数キャラの台詞や、台詞と地の文を同じブロックに混在させない。
+- ブロック間は必ず改行で区切る。同じラベルが続くなら別ブロックに分ける。
+- 鍵括弧「」は台詞内で自由に使ってよい。
+- メタ発言 (作者視点のコメント、"続けます"等) は書かない。`);
+    if (LENGTH_INSTR[chat.responseLength]) parts.push("# 文量\n" + LENGTH_INSTR[chat.responseLength]);
   } else {
     const blocks = selected.map((c) => {
-      const lines = [`## ${c.name || `CH${c.idx}`}`];
+      const lines = [`## ${charName(c)}`];
       if (c.persona) lines.push(`設定: ${c.persona}`);
       if (c.tone) lines.push(`口調: ${c.tone}`);
       return lines.join("\n");
     }).join("\n\n");
-    const names = selected.map((c) => c.name || `CH${c.idx}`).join(", ");
+    const names = selected.map(charName).join(", ");
     parts.push("# 演じるキャラクター (複数)");
     parts.push(`以下の全員を同時に演じてください: ${names}`);
     parts.push(blocks);
     if (selfLine) parts.push(selfLine);
-    parts.push("# 応答ルール");
-    parts.push(`- 各発言は次の形式で、1行ずつ書いてください:
-  [キャラ名] 発言内容
-- 場面描写・情景・状況変化は次の形式で書いてください:
-  [${NARRATION_LABEL}] 描写内容
-- 1ターンに 0 人〜全員まで自由に発言・地の文を混在できます。話す必要のないキャラは行を省略。
-- [キャラ名] の名前は上の表記と完全一致させてください。メタ発言は書かないでください。`);
+    parts.push("# 出力フォーマット (厳守)");
+    parts.push(`- 出力はブロックの集合とする。各ブロックは "[ラベル] 本文" の形式で必ず先頭に [ラベル] を置く。
+- 使えるラベルは以下のみ:
+  ${selected.map((c) => `[${charName(c)}]`).join(" / ")} / [${NARRATION_LABEL}]
+- 1ブロックに1ラベル。1ブロック内には1キャラ (またはその地の文) の内容のみ。複数キャラの台詞・地の文・心情を同じブロックに混在させない。
+- ブロック間は必ず改行で区切る。同じラベルが続くなら別ブロックに分ける。
+- 1ターンに 0 人〜全員まで自由に発言・地の文を混在できる。話す必要のないキャラは省略してよい。
+- ラベル名は上の表記と完全一致させること。鍵括弧「」は台詞内で自由に使ってよい。
+- メタ発言は書かない。`);
+    if (LENGTH_INSTR[chat.responseLength]) parts.push("# 文量\n" + LENGTH_INSTR[chat.responseLength]);
   }
   return parts.join("\n\n");
 }
@@ -999,30 +1088,41 @@ function parseReply(text, chat) {
   const known = selected.map((c) => c.name).filter(Boolean);
   const defaultName = selected.length === 1 ? (selected[0].name || "CH") : (known[0] || "assistant");
 
-  const lines = text.split(/\r?\n/);
-  const msgs = [];
-  let cur = null;
-  const flush = () => { if (cur) { msgs.push(cur); cur = null; } };
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) { if (cur) cur.content += "\n"; continue; }
-    const m = line.match(/^\[([^\]]+)\]\s*[:：]?\s*(.*)$/);
-    if (m) {
-      flush();
-      const rawName = m[1].trim();
-      if (NARRATION_TAGS.test(rawName)) {
-        cur = { role: "assistant", name: NARRATION_LABEL, narration: true, content: m[2] || "" };
-      } else {
-        cur = { role: "assistant", name: resolveName(rawName, known), content: m[2] || "" };
-      }
-    } else {
-      if (cur) cur.content += (cur.content ? "\n" : "") + line;
-      else cur = { role: "assistant", name: defaultName, content: line };
-    }
+  // 行頭・行内を問わず [Name] をすべて拾い、その間のテキストをそのキャラに帰属させる
+  const re = /\[([^\[\]\n]{1,40})\]\s*[:：]?\s*/g;
+  const markers = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    markers.push({ start: m.index, end: m.index + m[0].length, name: m[1].trim() });
   }
-  flush();
-  return msgs.map((m) => ({ ...m, content: m.content.trim() })).filter((m) => m.content.length > 0);
+
+  if (markers.length === 0) {
+    return [{ role: "assistant", name: defaultName, content: text.trim() }];
+  }
+
+  const msgs = [];
+  const pushSeg = (name, content) => {
+    const c = content.trim();
+    if (!c) return;
+    if (NARRATION_TAGS.test(name)) {
+      msgs.push({ role: "assistant", name: NARRATION_LABEL, narration: true, content: c });
+    } else {
+      msgs.push({ role: "assistant", name: resolveName(name, known), content: c });
+    }
+  };
+
+  // 最初のマーカーより前のテキストはデフォルト話者に帰属
+  if (markers[0].start > 0) {
+    const prefix = text.slice(0, markers[0].start).trim();
+    if (prefix) pushSeg(defaultName, prefix);
+  }
+  for (let i = 0; i < markers.length; i++) {
+    const cur = markers[i];
+    const next = markers[i + 1];
+    const content = text.slice(cur.end, next ? next.start : text.length);
+    pushSeg(cur.name, content);
+  }
+  return msgs.length ? msgs : [{ role: "assistant", name: defaultName, content: text.trim() }];
 }
 function resolveName(name, known) {
   if (known.includes(name)) return name;

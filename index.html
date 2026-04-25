@@ -196,6 +196,15 @@
           <input type="text" id="chatNameInput" maxlength="60" />
         </label>
         <label class="field">
+          <span>応答の文量</span>
+          <select id="chatLength">
+            <option value="short">短め (簡潔)</option>
+            <option value="normal">標準</option>
+            <option value="long">長め (描写多め)</option>
+            <option value="very_long">とても長め (じっくり描写)</option>
+          </select>
+        </label>
+        <label class="field">
           <span>シチュエーション設定 (このチャットだけの状況)</span>
           <textarea id="chatSituation" rows="6" placeholder="例: 酒場で偶然出会った場面。夜更けで人気は少ない。主人公は疲れた様子で席に座る。"></textarea>
           <small class="hint">今回のチャットでのみ機能する場面・状況を書きます。</small>
