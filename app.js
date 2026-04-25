@@ -61,6 +61,7 @@ function makeChat(opts = {}) {
     selectedIdxs: opts.selectedIdxs || [],
     situation: opts.situation || "",
     carryover: opts.carryover || "",
+    summary: opts.summary || "",
     responseLength: opts.responseLength || "normal",
     history: opts.history || [],
   };
@@ -763,6 +764,7 @@ function openChatMetaModal() {
   $("#chatLength").value = c.responseLength || "normal";
   $("#chatSituation").value = c.situation || "";
   $("#chatCarryover").value = c.carryover || "";
+  $("#chatSummary").value = c.summary || "";
   showModal(chatMetaModal);
 }
 $("#chatMetaSave").addEventListener("click", () => {
@@ -772,11 +774,82 @@ $("#chatMetaSave").addEventListener("click", () => {
   c.responseLength = $("#chatLength").value || "normal";
   c.situation = $("#chatSituation").value.trim();
   c.carryover = $("#chatCarryover").value.trim();
+  c.summary = $("#chatSummary").value.trim();
   c.updatedAt = now();
   saveChats();
   hideModal(chatMetaModal);
   renderTopbar();
   toast("チャット設定を保存しました");
+});
+
+// ---------- Summary generation ----------
+function transcriptForSummary(chat) {
+  return chat.history
+    .filter((m) => (m.role === "user" || m.role === "assistant") && !m.typing)
+    .map((m) => {
+      let speaker;
+      if (m.narration) speaker = NARRATION_LABEL;
+      else if (m.role === "user") speaker = chat.slots[0].name || "自分";
+      else speaker = m.name || "assistant";
+      return `${speaker}: ${m.content}`;
+    })
+    .join("\n");
+}
+
+async function generateSummary(chat) {
+  if (!chat) throw new Error("チャットが見つかりません");
+  if (!chat.history.length) throw new Error("会話履歴が空です");
+  if (!state.api.key) throw new Error("API キーが未設定です");
+  const transcript = transcriptForSummary(chat);
+  const system = "あなたは優れた要約者です。物語的なロールプレイ会話のあらすじを、後で続きを書く人が状況を完全に把握できるよう、客観的かつ具体的に要約します。";
+  const user = `以下のロールプレイ会話のあらすじを 200〜500 字程度で書いてください。
+
+含めるべきもの:
+- 登場人物 (名前・関係・性格の核)
+- 場面・舞台・時間帯
+- 主要な出来事の流れ (時系列)
+- 現在の状況・最後の場面
+- 未解決の事柄・伏線・気になる感情
+
+避けること:
+- 創作的な解釈や脚色
+- 「次回は〜」のような未来予測
+- メタ的な感想
+
+---
+${transcript}
+---
+
+あらすじ:`;
+  const messages = [{ role: "user", content: user }];
+  if (state.api.provider === "gemini") return await callGemini(system, messages);
+  if (state.api.provider === "anthropic") return await callAnthropic(system, messages);
+  return await callOpenAI(system, messages);
+}
+
+async function runSummaryInto(targetTextareaId, btn) {
+  const chat = currentChat();
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "生成中…";
+  try {
+    const text = await generateSummary(chat);
+    $(`#${targetTextareaId}`).value = text;
+    toast("あらすじを生成しました");
+  } catch (err) {
+    toast("失敗: " + (err?.message || String(err)));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+$("#btnGenSummary").addEventListener("click", (e) => runSummaryInto("chatSummary", e.currentTarget));
+$("#btnSummaryToCarryover").addEventListener("click", () => {
+  const s = $("#chatSummary").value.trim();
+  if (!s) { toast("あらすじが空です"); return; }
+  $("#chatCarryover").value = s;
+  toast("引き継ぎメモにコピーしました");
 });
 $("#chatDelete").addEventListener("click", () => {
   const c = currentChat();
@@ -806,6 +879,12 @@ $("#btnFillCarryover").addEventListener("click", () => {
     }).join("\n");
   $("#newChatCarryover").value = last;
 });
+$("#btnUseSummary").addEventListener("click", () => {
+  const c = currentChat();
+  if (!c || !c.summary) { toast("現在のチャットにあらすじが保存されていません"); return; }
+  $("#newChatCarryover").value = c.summary;
+});
+$("#btnGenSummaryNew").addEventListener("click", (e) => runSummaryInto("newChatCarryover", e.currentTarget));
 $("#newChatCreate").addEventListener("click", () => {
   const cur = currentChat();
   const name = $("#newChatName").value.trim() || "新しい会話";

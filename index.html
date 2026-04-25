@@ -214,6 +214,15 @@
           <textarea id="chatCarryover" rows="6" placeholder="例: 前回、主人公とアリアは森の洞窟で怪物と戦い、撃退した。彼らは街へ戻る道中..."></textarea>
           <small class="hint">別チャットから話の流れを継承したいときに書きます。システムプロンプトに含まれます。</small>
         </label>
+        <label class="field">
+          <span>このチャットのあらすじ</span>
+          <textarea id="chatSummary" rows="6" placeholder="自動生成するか、手で書いてください。"></textarea>
+          <div class="field-actions">
+            <button type="button" id="btnGenSummary" class="btn btn-secondary btn-small">🪄 LLMで自動生成</button>
+            <button type="button" id="btnSummaryToCarryover" class="btn btn-ghost btn-small">→ 引き継ぎメモにコピー</button>
+          </div>
+          <small class="hint">会話の振り返りや、他チャットへの引き継ぎ素材として使えます。</small>
+        </label>
       </div>
       <div class="modal-footer">
         <button type="button" id="chatDelete" class="btn btn-danger">このチャットを削除</button>
@@ -251,7 +260,11 @@
         <label class="field">
           <span>引き継ぎメモ (任意)</span>
           <textarea id="newChatCarryover" rows="4" placeholder="前の会話から引き継ぎたい流れ"></textarea>
-          <button type="button" id="btnFillCarryover" class="btn btn-ghost btn-small">現在の会話の末尾を引用</button>
+          <div class="field-actions">
+            <button type="button" id="btnFillCarryover" class="btn btn-ghost btn-small">📝 末尾を引用</button>
+            <button type="button" id="btnUseSummary" class="btn btn-ghost btn-small">📖 あらすじを使う</button>
+            <button type="button" id="btnGenSummaryNew" class="btn btn-ghost btn-small">🪄 あらすじ自動生成</button>
+          </div>
         </label>
       </div>
       <div class="modal-footer">
