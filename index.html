@@ -34,6 +34,7 @@
     </main>
 
     <form id="composer" class="composer">
+      <button id="btnDice" type="button" class="mode-toggle" title="ダイスロール">🎲</button>
       <button id="btnMode" type="button" class="mode-toggle" title="入力モード切替 (💬 セリフ / 📖 地の文)">💬</button>
       <textarea id="input" placeholder="メッセージを入力 (Shift+Enter で改行)" rows="1"></textarea>
       <button id="btnSend" type="submit" class="btn btn-primary btn-send" title="送信">
@@ -238,6 +239,7 @@
       <div class="modal-footer">
         <button type="button" id="chatDelete" class="btn btn-danger">このチャットを削除</button>
         <div class="modal-footer-right">
+          <button type="button" id="chatExportHTML" class="btn btn-secondary">📥 HTML出力</button>
           <button type="button" class="btn btn-ghost" data-close="chatMetaModal">キャンセル</button>
           <button type="button" id="chatMetaSave" class="btn btn-primary">保存</button>
         </div>
@@ -321,6 +323,57 @@
         <div class="modal-footer-right">
           <button type="button" class="btn btn-ghost" data-close="savePresetModal">キャンセル</button>
           <button type="button" id="savePresetConfirm" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dice modal -->
+  <div id="diceModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>ダイスロール</h2>
+        <button class="icon-btn" data-close="diceModal" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>行動の宣言 (任意)</span>
+          <textarea id="diceAction" rows="2" placeholder="例: 鍵を開けようとする / 相手の表情を読み取る"></textarea>
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>ダイス</span>
+            <select id="diceType">
+              <option value="1d6">1d6</option>
+              <option value="2d6">2d6</option>
+              <option value="3d6">3d6</option>
+              <option value="1d20" selected>1d20</option>
+              <option value="1d100">1d100</option>
+              <option value="custom">カスタム (NdM)</option>
+            </select>
+          </label>
+          <label class="field" id="diceCustomField" style="display:none">
+            <span>カスタム式</span>
+            <input type="text" id="diceCustom" placeholder="例: 4d8" />
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>目標値 (任意・出目以上で成功)</span>
+            <input type="number" id="diceTarget" placeholder="例: 12" />
+          </label>
+          <label class="field">
+            <span>補正値</span>
+            <input type="number" id="diceMod" value="0" />
+          </label>
+        </div>
+        <small class="hint">結果はチャットに自動で送信され、LLM が成功/失敗に応じて展開を描写します。</small>
+      </div>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" data-close="diceModal">キャンセル</button>
+          <button type="button" id="diceRoll" class="btn btn-primary">🎲 振る</button>
         </div>
       </div>
     </div>

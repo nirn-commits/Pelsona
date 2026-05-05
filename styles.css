@@ -218,6 +218,33 @@ body { display: block; }
   color: #fca5a5;
 }
 
+/* Dice messages */
+.msg.dice {
+  align-self: center;
+  max-width: 88%;
+  flex-direction: column;
+  align-items: stretch;
+}
+.msg.dice .avatar { display: none; }
+.msg.dice .name {
+  text-align: center;
+  color: #ffd57a;
+  letter-spacing: 0.1em;
+  font-size: 10px;
+}
+.msg.dice .bubble {
+  background: rgba(255, 200, 100, 0.08);
+  border: 1px solid rgba(255, 200, 100, 0.4);
+  color: #ffe2a6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Hiragino Sans", monospace;
+  white-space: pre-wrap;
+  text-align: left;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+.msg.dice.success .bubble { border-color: rgba(52, 211, 153, 0.55); color: #c8f5dd; background: rgba(52, 211, 153, 0.08); }
+.msg.dice.failure .bubble { border-color: rgba(248, 113, 113, 0.55); color: #ffd2d2; background: rgba(248, 113, 113, 0.08); }
+
 .regen-row {
   display: flex;
   justify-content: center;

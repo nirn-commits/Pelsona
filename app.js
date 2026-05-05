@@ -379,8 +379,13 @@ function appendMessageEl(m) {
   if (m.role === "system") wrap.classList.add("system");
   if (m.role === "error") wrap.classList.add("error");
   if (m.narration) wrap.classList.add("narration");
+  if (m.dice) {
+    wrap.classList.add("dice");
+    if (m.diceSuccess === true) wrap.classList.add("success");
+    else if (m.diceSuccess === false) wrap.classList.add("failure");
+  }
 
-  if (m.role !== "system" && m.role !== "error" && !m.narration) {
+  if (m.role !== "system" && m.role !== "error" && !m.narration && !m.dice) {
     const avatar = document.createElement("div");
     avatar.className = "avatar";
     const ch = findCharFor(m, chat);
@@ -396,7 +401,8 @@ function appendMessageEl(m) {
   body.className = "msg-body";
   const name = document.createElement("div");
   name.className = "name";
-  if (m.narration) name.textContent = NARRATION_LABEL;
+  if (m.dice) name.textContent = "🎲 ダイスロール";
+  else if (m.narration) name.textContent = NARRATION_LABEL;
   else if (m.role === "user") name.textContent = (chat?.slots[0].name) || "自分";
   else if (m.role === "assistant") name.textContent = m.name || "assistant";
   if (name.textContent) body.appendChild(name);
@@ -990,6 +996,16 @@ async function onSend() {
   if (state.sending) return;
   const text = inputEl.value.trim();
   if (!text) return;
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+  const userMsg = state.narrationMode
+    ? { role: "user", content: text, narration: true }
+    : { role: "user", content: text };
+  await sendUserMessage(userMsg);
+}
+
+async function sendUserMessage(userMsg) {
+  if (state.sending) return;
   const chat = currentChat();
   if (!chat) return;
   if (!chat.selectedIdxs.length) {
@@ -1000,11 +1016,6 @@ async function onSend() {
     pushMessage({ role: "system", content: "API キーが未設定です。右上の「☰」→「⚙ API」から設定してください。" });
     return;
   }
-  inputEl.value = "";
-  inputEl.style.height = "auto";
-  const userMsg = state.narrationMode
-    ? { role: "user", content: text, narration: true }
-    : { role: "user", content: text };
   pushMessage(userMsg);
 
   const typing = { role: "assistant", name: "…", content: "考え中…", typing: true };
@@ -1016,7 +1027,7 @@ async function onSend() {
   sendBtn.disabled = true;
   try {
     const reply = await callLLM();
-    chat.history.pop(); // remove typing
+    chat.history.pop();
     saveChats();
     renderMessages();
     for (const m of parseReply(reply, chat)) pushMessage(m);
@@ -1095,6 +1106,12 @@ function buildSystemPrompt() {
 - メタ発言は書かない。`);
     if (LENGTH_INSTR[chat.responseLength]) parts.push("# 文量\n" + LENGTH_INSTR[chat.responseLength]);
   }
+  parts.push(`# 判定ルール
+- ユーザー入力に【行動】や【ダイス】が含まれる場合、それは TRPG 風の判定です。
+- 出目・補正・成功/失敗の表記を尊重し、その結果を物語の事実として扱ってください。
+- 「成功」とあれば行動は概ね意図通りに進みます (周辺の反応や副次的描写は加えてよい)。
+- 「失敗」とあれば行動は失敗、または不利な形に転びます。
+- 出目が無い場合は通常のロールプレイとして自然に進めてください。`);
   return parts.join("\n\n");
 }
 
@@ -1599,3 +1616,166 @@ function parseQuestJSON(text) {
   if (!obj || typeof obj !== "object") throw new Error("不正な構造");
   return obj;
 }
+
+// ---------- Dice ----------
+function rollDice(notation) {
+  const m = String(notation || "").trim().match(/^(\d+)\s*[dD]\s*(\d+)$/);
+  if (!m) throw new Error("形式が NdM ではありません: " + notation);
+  const n = parseInt(m[1], 10), s = parseInt(m[2], 10);
+  if (n < 1 || n > 100) throw new Error("ダイス本数は 1〜100");
+  if (s < 2 || s > 1000) throw new Error("面数は 2〜1000");
+  const rolls = [];
+  for (let i = 0; i < n; i++) rolls.push(1 + Math.floor(Math.random() * s));
+  const total = rolls.reduce((a, b) => a + b, 0);
+  return { notation: `${n}d${s}`, rolls, total };
+}
+
+$("#btnDice").addEventListener("click", () => {
+  $("#diceAction").value = "";
+  $("#diceType").value = "1d20";
+  $("#diceCustom").value = "";
+  $("#diceTarget").value = "";
+  $("#diceMod").value = "0";
+  $("#diceCustomField").style.display = "none";
+  showModal($("#diceModal"));
+});
+$("#diceType").addEventListener("change", () => {
+  $("#diceCustomField").style.display = $("#diceType").value === "custom" ? "" : "none";
+});
+$("#diceRoll").addEventListener("click", async () => {
+  const action = $("#diceAction").value.trim();
+  let notation = $("#diceType").value;
+  if (notation === "custom") notation = $("#diceCustom").value.trim();
+  const targetRaw = $("#diceTarget").value;
+  const target = targetRaw === "" ? null : Number(targetRaw);
+  const mod = Number($("#diceMod").value) || 0;
+  let result;
+  try {
+    result = rollDice(notation);
+  } catch (e) {
+    toast("無効なダイス: " + e.message);
+    return;
+  }
+  const total = result.total + mod;
+  const success = target == null ? null : (total >= target);
+  const lines = [];
+  if (action) lines.push(`【行動】${action}`);
+  let roll = `【ダイス】${result.notation} → [${result.rolls.join(", ")}]`;
+  if (mod) roll += ` ${mod >= 0 ? "+" : ""}${mod}`;
+  roll += ` = ${total}`;
+  if (target != null) roll += ` (目標 ${target}: ${success ? "成功" : "失敗"})`;
+  lines.push(roll);
+  hideModal($("#diceModal"));
+  await sendUserMessage({
+    role: "user",
+    dice: true,
+    diceSuccess: success,
+    content: lines.join("\n"),
+  });
+});
+
+// ---------- HTML chat log export ----------
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+  }[c]));
+}
+function buildChatHTML(chat) {
+  const title = escapeHtml(chat.name || "Pelsona チャット");
+  const slotsHTML = chat.slots.map((s, i) => {
+    if (!s.name && !s.image) return "";
+    const role = i === 0 ? "YOU" : `CH${i}`;
+    const img = s.image ? `<img src="${s.image}" alt="">` : "";
+    const persona = s.persona ? `<p class="cs-persona">${escapeHtml(s.persona)}</p>` : "";
+    const tone = s.tone ? `<p class="cs-tone">口調: ${escapeHtml(s.tone)}</p>` : "";
+    return `<div class="charcard"><div class="cs-img">${img}</div><div class="cs-body"><div class="cs-role">${role}</div><div class="cs-name">${escapeHtml(s.name || "(無名)")}</div>${persona}${tone}</div></div>`;
+  }).join("");
+  const meta = [];
+  if (state.world.name || state.world.description) {
+    meta.push(`<section class="meta"><h2>世界観</h2>${state.world.name ? `<h3>${escapeHtml(state.world.name)}</h3>` : ""}<p>${escapeHtml(state.world.description || "")}</p></section>`);
+  }
+  if (chat.situation) meta.push(`<section class="meta"><h2>シチュエーション</h2><p>${escapeHtml(chat.situation)}</p></section>`);
+  if (chat.summary) meta.push(`<section class="meta"><h2>あらすじ</h2><p>${escapeHtml(chat.summary)}</p></section>`);
+  const messagesHTML = chat.history
+    .filter((m) => !m.typing)
+    .map((m) => {
+      if (m.role === "system") return `<div class="m sys">${escapeHtml(m.content)}</div>`;
+      if (m.role === "error") return "";
+      if (m.dice) {
+        const cls = m.diceSuccess === true ? "ok" : m.diceSuccess === false ? "ng" : "";
+        return `<div class="m dice ${cls}"><div class="lbl">🎲 ダイスロール</div><pre>${escapeHtml(m.content)}</pre></div>`;
+      }
+      if (m.narration) return `<div class="m narr"><div class="lbl">地の文</div><p>${escapeHtml(m.content)}</p></div>`;
+      const isUser = m.role === "user";
+      const speaker = isUser ? (chat.slots[0].name || "自分") : (m.name || "assistant");
+      const ch = isUser ? chat.slots[0] : chat.slots.find((c, i) => i !== 0 && c.name === m.name);
+      const av = ch && ch.image ? `<img class="av" src="${ch.image}" alt="">` : `<div class="av av-letter">${escapeHtml((speaker[0] || "?"))}</div>`;
+      return `<div class="m ${isUser ? "me" : "other"}">${av}<div class="bubble"><div class="who">${escapeHtml(speaker)}</div><p>${escapeHtml(m.content)}</p></div></div>`;
+    }).join("\n");
+  return `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><title>${title}</title>
+<style>
+  :root{--bg:#0b0e14;--card:#161b26;--card2:#1d2431;--border:#252d3c;--text:#e8ecf3;--dim:#9aa4b4;--me:#3730a3;--other:#1c2332;--accent:#8ab4ff;--narr:#a78bfa;--dice:#ffd57a;--ok:#34d399;--ng:#f87171;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Hiragino Sans","Yu Gothic",Meiryo,sans-serif;line-height:1.6;font-size:14px;padding:24px}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:22px;background:linear-gradient(90deg,var(--accent),var(--narr));-webkit-background-clip:text;background-clip:text;color:transparent;margin:0 0 4px}
+  .stamp{color:var(--dim);font-size:12px;margin-bottom:24px}
+  .casts{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:24px}
+  .charcard{display:flex;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px}
+  .cs-img{width:64px;height:64px;border-radius:50%;overflow:hidden;background:var(--card2);flex-shrink:0;display:flex;align-items:center;justify-content:center}
+  .cs-img img{width:100%;height:100%;object-fit:cover}
+  .cs-body{min-width:0;flex:1}
+  .cs-role{font-size:10px;color:var(--accent);letter-spacing:0.1em}
+  .cs-name{font-weight:700}
+  .cs-persona,.cs-tone{margin:4px 0;font-size:12px;color:var(--dim)}
+  .meta{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:16px}
+  .meta h2{margin:0 0 6px;font-size:14px;color:var(--accent)}
+  .meta h3{margin:0 0 6px;font-size:13px}
+  .meta p{margin:0;color:var(--dim);white-space:pre-wrap}
+  .log{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+  .m{display:flex;gap:8px;align-items:flex-end;max-width:82%}
+  .m.me{align-self:flex-end;flex-direction:row-reverse}
+  .m.other{align-self:flex-start}
+  .av{width:36px;height:36px;border-radius:50%;background:var(--card2);object-fit:cover;border:1px solid var(--border)}
+  .av-letter{display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--dim)}
+  .bubble{background:var(--other);padding:8px 12px;border-radius:14px;border:1px solid var(--border)}
+  .me .bubble{background:var(--me);border-color:transparent}
+  .who{font-size:11px;color:var(--dim);margin-bottom:2px}
+  .me .who{text-align:right}
+  .bubble p{margin:0;white-space:pre-wrap;word-break:break-word}
+  .m.narr{align-self:center;max-width:88%;flex-direction:column;text-align:center}
+  .m.narr .lbl{font-size:10px;color:var(--narr);letter-spacing:0.1em}
+  .m.narr p{margin:0;padding:10px 14px;border:1px solid rgba(167,139,250,.4);border-radius:10px;color:#d4c5ff;font-style:italic;white-space:pre-wrap}
+  .m.dice{align-self:center;max-width:88%;flex-direction:column}
+  .m.dice .lbl{font-size:10px;color:var(--dice);letter-spacing:0.1em;text-align:center}
+  .m.dice pre{margin:0;padding:10px 14px;border:1px solid rgba(255,200,100,.4);border-radius:10px;color:#ffe2a6;background:rgba(255,200,100,.06);white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .m.dice.ok pre{border-color:rgba(52,211,153,.55);color:#c8f5dd;background:rgba(52,211,153,.08)}
+  .m.dice.ng pre{border-color:rgba(248,113,113,.55);color:#ffd2d2;background:rgba(248,113,113,.08)}
+  .m.sys{align-self:center;font-size:12px;color:var(--dim);border:1px dashed var(--border);padding:6px 12px;border-radius:10px}
+</style></head>
+<body><div class="wrap">
+  <h1>${title}</h1>
+  <div class="stamp">作成: ${escapeHtml(new Date(chat.createdAt).toLocaleString())} / 更新: ${escapeHtml(new Date(chat.updatedAt).toLocaleString())}</div>
+  <div class="casts">${slotsHTML}</div>
+  ${meta.join("\n")}
+  <div class="log">${messagesHTML}</div>
+</div></body></html>`;
+}
+$("#chatExportHTML").addEventListener("click", () => {
+  const chat = currentChat();
+  if (!chat) return;
+  const html = buildChatHTML(chat);
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (chat.name || "chat").replace(/[\\/:*?"<>|]/g, "_").slice(0, 60);
+  const date = new Date(chat.updatedAt).toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `${safeName}-${date}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("HTML を書き出しました");
+});
