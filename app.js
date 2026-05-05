@@ -37,6 +37,16 @@ const DEFAULT_MODELS = {
   openai: "gpt-4o-mini",
 };
 
+const STAT_KEYS = ["str", "dex", "con", "int", "wis", "cha"];
+const STAT_LABELS = { str: "筋力", dex: "敏捷", con: "体力", int: "知力", wis: "感知", cha: "魅力" };
+const DEFAULT_STATS = () => ({ str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 });
+function statOf(ch, key) {
+  const v = (ch && ch.stats && ch.stats[key] != null) ? Number(ch.stats[key]) : 10;
+  return Math.max(1, Math.min(30, v));
+}
+function statMod(v) { return Math.floor((v - 10) / 2); }
+function fmtMod(m) { return (m >= 0 ? "+" : "") + m; }
+
 const EMPTY_CHAR = () => ({
   name: "", image: "",
   appearance: "",
@@ -46,6 +56,7 @@ const EMPTY_CHAR = () => ({
   tone: "",
   quirks: "",
   greeting: "",
+  stats: DEFAULT_STATS(),
 });
 
 const CHAR_TEXT_FIELDS = ["appearance", "persona", "background", "abilities", "tone", "quirks", "greeting"];
@@ -652,12 +663,14 @@ function openCharModal(idx) {
   $("#charGreeting").value = ch.greeting || "";
   editingImage = ch.image || "";
   updateAvatarPreview();
+  renderStatsGrid(ch.stats || DEFAULT_STATS());
 
   // 自分スロットでは外見以外を隠す (名前と画像で簡素に表示)
-  $("#appearanceField").style.display = isSelf ? "" : "";
+  $("#appearanceField").style.display = "";
   $("#personaField").style.display = isSelf ? "none" : "";
   $("#backgroundField").style.display = isSelf ? "none" : "";
   $("#abilitiesField").style.display = isSelf ? "none" : "";
+  $("#statsField").style.display = "";
   $("#toneField").style.display = isSelf ? "none" : "";
   $("#quirksField").style.display = isSelf ? "none" : "";
   $("#greetingField").style.display = isSelf ? "none" : "";
@@ -666,6 +679,37 @@ function openCharModal(idx) {
 
   showModal(charModal);
   $("#charName").focus();
+}
+
+function renderStatsGrid(stats) {
+  const grid = $("#statsGrid");
+  grid.innerHTML = "";
+  STAT_KEYS.forEach((key) => {
+    const cell = document.createElement("div");
+    cell.className = "stat-cell";
+    const label = document.createElement("div");
+    label.className = "stat-cell-label";
+    label.textContent = STAT_LABELS[key];
+    const input = document.createElement("input");
+    input.type = "number"; input.min = "1"; input.max = "30";
+    input.value = String(statOf({ stats }, key));
+    input.dataset.stat = key;
+    const mod = document.createElement("div");
+    mod.className = "stat-cell-mod";
+    const updateMod = () => { mod.textContent = `修正 ${fmtMod(statMod(Number(input.value) || 10))}`; };
+    updateMod();
+    input.addEventListener("input", updateMod);
+    cell.appendChild(label); cell.appendChild(input); cell.appendChild(mod);
+    grid.appendChild(cell);
+  });
+}
+function readStatsGrid() {
+  const out = {};
+  $$(".stat-cell input", $("#statsGrid")).forEach((el) => {
+    const v = Math.max(1, Math.min(30, Number(el.value) || 10));
+    out[el.dataset.stat] = v;
+  });
+  return { ...DEFAULT_STATS(), ...out };
 }
 
 function updateAvatarPreview() {
@@ -708,6 +752,7 @@ $("#charSave").addEventListener("click", () => {
     tone: isSelf ? "" : $("#charTone").value.trim(),
     quirks: isSelf ? "" : $("#charQuirks").value.trim(),
     greeting: isSelf ? "" : $("#charGreeting").value.trim(),
+    stats: readStatsGrid(),
   };
   chat.slots[idx] = next;
   touchChat();
@@ -750,6 +795,7 @@ $("#savePresetConfirm").addEventListener("click", () => {
     tone: $("#charTone").value.trim(),
     quirks: $("#charQuirks").value.trim(),
     greeting: $("#charGreeting").value.trim(),
+    stats: readStatsGrid(),
   };
   const existing = state.presets.find((p) => p.name === name);
   if (existing) {
@@ -790,6 +836,7 @@ function renderPresetPickerList() {
       $("#charGreeting").value = p.greeting || "";
       editingImage = p.image || "";
       updateAvatarPreview();
+      renderStatsGrid(p.stats || DEFAULT_STATS());
       hideModal($("#presetPickerModal"));
       toast("プリセットを読み込みました");
     });
@@ -1106,6 +1153,10 @@ function buildSystemPrompt() {
     const bits = [];
     if (self.name) bits.push(`名前: ${self.name}`);
     if (self.appearance) bits.push(`外見: ${self.appearance}`);
+    if (self.stats) {
+      const sp = STAT_KEYS.map((k) => `${STAT_LABELS[k]}${statOf(self, k)}(${fmtMod(statMod(statOf(self, k)))})`);
+      bits.push(`能力値: ${sp.join(" / ")}`);
+    }
     if (bits.length) selfLine = `# ユーザー (対話相手)\n${bits.join("\n")}`;
   }
 
@@ -1123,6 +1174,10 @@ function buildSystemPrompt() {
     ];
     for (const [label, val] of map) {
       if (val) lines.push(asHeader ? `${label}: ${val}` : `${label}:\n${val}`);
+    }
+    if (c.stats) {
+      const parts = STAT_KEYS.map((k) => `${STAT_LABELS[k]}${statOf(c, k)}(${fmtMod(statMod(statOf(c, k)))})`);
+      lines.push(asHeader ? `能力値: ${parts.join(" / ")}` : `能力値:\n${parts.join(" / ")}`);
     }
     return lines.join("\n");
   };
@@ -1541,6 +1596,7 @@ function startQuestById(id) {
       tone: npc.tone || "",
       quirks: npc.quirks || "",
       greeting: npc.greeting || "",
+      stats: { ...DEFAULT_STATS(), ...(npc.stats || {}) },
     };
   });
   const selectedIdxs = q.npcs.map((_, i) => i + 1).filter((i) => slots[i] && slots[i].name);
@@ -1640,7 +1696,8 @@ ${theme || "(指定なし。フリー)"}
       "abilities": "能力・特技",
       "tone": "口調の特徴",
       "quirks": "口癖・好み・癖",
-      "greeting": "出会った時の最初の一言"
+      "greeting": "出会った時の最初の一言",
+      "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 }
     }
   ],
   "tags": ["ジャンルタグ", "..."]
@@ -1651,7 +1708,8 @@ ${theme || "(指定なし。フリー)"}
 - 全フィールド日本語で具体的に
 - ナレーション (opening) は地の文のみ。台詞は含めない
 - 不要な改行や空行を出力に入れない
-- 出力は JSON ただ1つ。前後にテキストや改行を一切付けない`;
+- 出力は JSON ただ1つ。前後にテキストや改行を一切付けない
+- stats は各値 1〜18 の整数で、キャラの個性に合わせて偏らせる (筋力派は str を高く、知性派は int を高く)。突出した値は 14〜18、平均的な能力は 9〜12 を目安に`;
   const messages = [{ role: "user", content: user }];
   const prevMax = state.api.maxTokens;
   state.api.maxTokens = Math.max(prevMax, 4096);
@@ -1705,6 +1763,7 @@ $("#btnDice").addEventListener("click", () => {
   $("#diceCustom").value = "";
   $("#diceTarget").value = "";
   $("#diceMod").value = "0";
+  $("#diceStat").value = "";
   $("#diceCustomField").style.display = "none";
   showModal($("#diceModal"));
 });
@@ -1718,6 +1777,7 @@ $("#diceRoll").addEventListener("click", async () => {
   const targetRaw = $("#diceTarget").value;
   const target = targetRaw === "" ? null : Number(targetRaw);
   const mod = Number($("#diceMod").value) || 0;
+  const statKey = $("#diceStat").value;
   let result;
   try {
     result = rollDice(notation);
@@ -1725,11 +1785,19 @@ $("#diceRoll").addEventListener("click", async () => {
     toast("無効なダイス: " + e.message);
     return;
   }
-  const total = result.total + mod;
+  // Stat modifier from self
+  let statValue = null, statBonus = 0;
+  if (statKey) {
+    const self = currentChat()?.slots[0];
+    statValue = statOf(self, statKey);
+    statBonus = statMod(statValue);
+  }
+  const total = result.total + mod + statBonus;
   const success = target == null ? null : (total >= target);
   const lines = [];
   if (action) lines.push(`【行動】${action}`);
   let roll = `【ダイス】${result.notation} → [${result.rolls.join(", ")}]`;
+  if (statKey) roll += ` ${fmtMod(statBonus)} (${STAT_LABELS[statKey]}${statValue}修正)`;
   if (mod) roll += ` ${mod >= 0 ? "+" : ""}${mod}`;
   roll += ` = ${total}`;
   if (target != null) roll += ` (目標 ${target}: ${success ? "成功" : "失敗"})`;
@@ -1767,7 +1835,15 @@ function buildChatHTML(chat) {
     for (const [label, val] of map) {
       if (val) fieldRows.push(`<p class="cs-row"><span class="cs-lbl">${label}</span> ${escapeHtml(val)}</p>`);
     }
-    return `<div class="charcard"><div class="cs-img">${img}</div><div class="cs-body"><div class="cs-role">${role}</div><div class="cs-name">${escapeHtml(s.name || "(無名)")}</div>${fieldRows.join("")}</div></div>`;
+    let statsHTML = "";
+    if (s.stats) {
+      const cells = STAT_KEYS.map((k) => {
+        const v = statOf(s, k);
+        return `<div class="cs-stat"><span class="cs-stat-label">${STAT_LABELS[k]}</span><span class="cs-stat-value">${v}</span><span class="cs-stat-mod">${escapeHtml(fmtMod(statMod(v)))}</span></div>`;
+      }).join("");
+      statsHTML = `<div class="cs-stats">${cells}</div>`;
+    }
+    return `<div class="charcard"><div class="cs-img">${img}</div><div class="cs-body"><div class="cs-role">${role}</div><div class="cs-name">${escapeHtml(s.name || "(無名)")}</div>${fieldRows.join("")}${statsHTML}</div></div>`;
   }).join("");
   const meta = [];
   if (state.world.name || state.world.description) {
@@ -1809,6 +1885,11 @@ function buildChatHTML(chat) {
   .cs-name{font-weight:700}
   .cs-row{margin:3px 0;font-size:12px;color:var(--dim)}
   .cs-lbl{display:inline-block;min-width:36px;color:var(--accent);font-size:10px;letter-spacing:.05em;margin-right:4px}
+  .cs-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:6px}
+  .cs-stat{background:var(--card2);border:1px solid var(--border);border-radius:6px;padding:4px;display:flex;flex-direction:column;align-items:center;font-size:10px}
+  .cs-stat-label{color:var(--dim)}
+  .cs-stat-value{font-weight:700;font-size:14px;color:var(--text)}
+  .cs-stat-mod{color:var(--accent);font-family:ui-monospace,monospace}
   .meta{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:16px}
   .meta h2{margin:0 0 6px;font-size:14px;color:var(--accent)}
   .meta h3{margin:0 0 6px;font-size:13px}

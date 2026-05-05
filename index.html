@@ -185,9 +185,14 @@
           <textarea id="charBackground" rows="3" placeholder="例: 元は王立警察の捜査官。冤罪事件の責任を負って退職し、現在は私立探偵。"></textarea>
         </label>
         <label class="field charField" id="abilitiesField">
-          <span>能力・特技</span>
+          <span>能力・特技 (テキスト)</span>
           <textarea id="charAbilities" rows="2" placeholder="例: 観察眼。簡単な魔法。剣術 (護身レベル)。"></textarea>
         </label>
+        <div class="field charField" id="statsField">
+          <span class="field-label">能力値 (1〜20、修正値 = (値−10)÷2)</span>
+          <div class="stats-grid" id="statsGrid"></div>
+          <small class="hint">ダイスロール時に「能力値判定」を選ぶと、修正値が自動で出目に加算されます。</small>
+        </div>
         <label class="field charField" id="toneField">
           <span>口調</span>
           <textarea id="charTone" rows="2" placeholder="例: 一人称は「僕」。語尾に「〜だよ」を使う。敬語は使わない。"></textarea>
@@ -373,6 +378,18 @@
             <input type="text" id="diceCustom" placeholder="例: 4d8" />
           </label>
         </div>
+        <label class="field">
+          <span>能力値判定 (任意・自分の修正値が出目に加算)</span>
+          <select id="diceStat">
+            <option value="">なし</option>
+            <option value="str">筋力</option>
+            <option value="dex">敏捷</option>
+            <option value="con">体力</option>
+            <option value="int">知力</option>
+            <option value="wis">感知</option>
+            <option value="cha">魅力</option>
+          </select>
+        </label>
         <div class="field-row">
           <label class="field">
             <span>目標値 (任意・出目以上で成功)</span>
