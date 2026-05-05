@@ -16,6 +16,7 @@ const LS = {
   current: "pelsona.current.v1",
   world: "pelsona.world.v1",
   api: "pelsona.api.v1",
+  quests: "pelsona.quests.v1",
   // legacy
   oldChars: "pelsona.chars.v1",
   oldHistory: "pelsona.history.v1",
@@ -78,14 +79,33 @@ const LENGTH_INSTR = {
 const state = {
   presets: [],
   chats: [],
+  quests: [],
   currentChatId: "",
   world: { name: "", description: "" },
   api: { ...DEFAULT_API },
   editingSlot: null,
+  editingQuestId: null,
   sending: false,
   drawerTab: "chats",
   narrationMode: false,
 };
+
+function makeQuest(opts = {}) {
+  return {
+    id: opts.id || uid(),
+    name: opts.name || "新しいクエスト",
+    summary: opts.summary || "",
+    setting: opts.setting || "",
+    goal: opts.goal || "",
+    opening: opts.opening || "",
+    hooks: opts.hooks || "",
+    worldHint: opts.worldHint || "",
+    npcs: Array.isArray(opts.npcs) ? opts.npcs.slice(0, 3) : [],
+    tags: Array.isArray(opts.tags) ? opts.tags : (opts.tags ? String(opts.tags).split(",").map(s => s.trim()).filter(Boolean) : []),
+    createdAt: opts.createdAt || now(),
+    updatedAt: opts.updatedAt || now(),
+  };
+}
 const NARRATION_TAGS = /^(地の文|narration|narrator|描写|ナレーション)$/i;
 const NARRATION_LABEL = "地の文";
 function currentChat() {
@@ -100,6 +120,7 @@ function setCurrentChat(id) {
 function saveChats() { localStorage.setItem(LS.chats, JSON.stringify(state.chats)); }
 function saveCurrent() { localStorage.setItem(LS.current, JSON.stringify({ id: state.currentChatId })); }
 function savePresets() { localStorage.setItem(LS.presets, JSON.stringify(state.presets)); }
+function saveQuests() { localStorage.setItem(LS.quests, JSON.stringify(state.quests)); }
 function saveWorld() { localStorage.setItem(LS.world, JSON.stringify(state.world)); }
 function saveApi() { localStorage.setItem(LS.api, JSON.stringify(state.api)); }
 
@@ -111,6 +132,7 @@ function touchChat() {
 
 function loadAll() {
   try { state.presets = JSON.parse(localStorage.getItem(LS.presets)) || []; } catch { state.presets = []; }
+  try { state.quests = JSON.parse(localStorage.getItem(LS.quests)) || []; } catch { state.quests = []; }
   try { state.chats = JSON.parse(localStorage.getItem(LS.chats)) || []; } catch { state.chats = []; }
   try {
     const w = JSON.parse(localStorage.getItem(LS.world)) || {};
@@ -422,6 +444,7 @@ function switchDrawerTab(name) {
   $$(".drawer-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   $$(".drawer-section").forEach((s) => s.classList.toggle("active", s.dataset.panel === name));
   if (name === "chats") renderChatsList();
+  if (name === "quests") renderQuestList();
   if (name === "presets") renderPresetList();
   if (name === "world") renderWorldForm();
   if (name === "api") renderApiForm();
@@ -1239,3 +1262,340 @@ function init() {
   }
 }
 init();
+
+// ---------- Quests ----------
+const questModal = $("#questModal");
+const genQuestModal = $("#genQuestModal");
+
+function renderQuestList() {
+  const list = $("#questList");
+  list.innerHTML = "";
+  if (!state.quests.length) {
+    list.innerHTML = '<div class="list-empty">クエストがありません。「＋ 新規作成」または「🪄 LLMで生成」で追加してください。</div>';
+    return;
+  }
+  const sorted = [...state.quests].sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const q of sorted) {
+    const item = document.createElement("div");
+    item.className = "list-item";
+    const main = document.createElement("div");
+    main.className = "list-item-main";
+    const title = document.createElement("div");
+    title.className = "list-item-title";
+    title.textContent = q.name || "(無題)";
+    const sub = document.createElement("div");
+    sub.className = "list-item-sub";
+    sub.textContent = (q.summary || q.setting || "").slice(0, 80) || "(説明なし)";
+    main.appendChild(title); main.appendChild(sub);
+
+    const actions = document.createElement("div");
+    actions.className = "list-item-actions";
+    const startBtn = document.createElement("button");
+    startBtn.className = "icon-btn"; startBtn.title = "このクエストで開始"; startBtn.textContent = "▶";
+    startBtn.addEventListener("click", (e) => { e.stopPropagation(); startQuestById(q.id); });
+    const delBtn = document.createElement("button");
+    delBtn.className = "icon-btn"; delBtn.title = "削除"; delBtn.textContent = "🗑";
+    delBtn.addEventListener("click", (e) => { e.stopPropagation(); deleteQuest(q.id); });
+    actions.appendChild(startBtn); actions.appendChild(delBtn);
+
+    item.appendChild(main); item.appendChild(actions);
+    item.addEventListener("click", () => openQuestModal(q.id));
+    list.appendChild(item);
+  }
+}
+
+function deleteQuest(id) {
+  const q = state.quests.find((x) => x.id === id);
+  if (!q) return;
+  if (!confirm(`クエスト「${q.name}」を削除しますか？`)) return;
+  state.quests = state.quests.filter((x) => x.id !== id);
+  saveQuests();
+  renderQuestList();
+  toast("削除しました");
+}
+
+// NPC editor
+function renderQuestNpcs(npcs) {
+  const wrap = $("#questNpcs");
+  wrap.innerHTML = "";
+  npcs.forEach((npc, idx) => {
+    const card = document.createElement("div");
+    card.className = "quest-npc";
+    card.dataset.idx = String(idx);
+    const row = document.createElement("div");
+    row.className = "quest-npc-row";
+    const name = document.createElement("input");
+    name.type = "text"; name.placeholder = "名前"; name.value = npc.name || "";
+    name.dataset.field = "name";
+    const remove = document.createElement("button");
+    remove.type = "button"; remove.className = "quest-npc-remove"; remove.textContent = "✕";
+    remove.title = "この NPC を削除";
+    remove.addEventListener("click", () => {
+      const cur = readQuestNpcs();
+      cur.splice(idx, 1);
+      renderQuestNpcs(cur);
+    });
+    row.appendChild(name); row.appendChild(remove);
+    const persona = document.createElement("textarea");
+    persona.placeholder = "人格・背景"; persona.rows = 2; persona.value = npc.persona || "";
+    persona.dataset.field = "persona";
+    const tone = document.createElement("textarea");
+    tone.placeholder = "口調"; tone.rows = 1; tone.value = npc.tone || "";
+    tone.dataset.field = "tone";
+    const greeting = document.createElement("input");
+    greeting.type = "text"; greeting.placeholder = "最初の一言 (任意)"; greeting.value = npc.greeting || "";
+    greeting.dataset.field = "greeting";
+    card.appendChild(row);
+    card.appendChild(persona);
+    card.appendChild(tone);
+    card.appendChild(greeting);
+    wrap.appendChild(card);
+  });
+}
+function readQuestNpcs() {
+  return $$(".quest-npc", $("#questNpcs")).map((card) => {
+    const npc = { name: "", persona: "", tone: "", greeting: "" };
+    $$("input,textarea", card).forEach((el) => {
+      if (el.dataset.field) npc[el.dataset.field] = el.value.trim();
+    });
+    return npc;
+  });
+}
+
+function openQuestModal(id) {
+  let q;
+  if (id) {
+    q = state.quests.find((x) => x.id === id);
+    if (!q) return;
+    state.editingQuestId = id;
+    $("#questModalTitle").textContent = "クエスト編集";
+    $("#questDelete").style.display = "";
+  } else {
+    q = makeQuest();
+    state.editingQuestId = null;
+    $("#questModalTitle").textContent = "新しいクエスト";
+    $("#questDelete").style.display = "none";
+  }
+  fillQuestModal(q);
+  showModal(questModal);
+}
+function fillQuestModal(q) {
+  $("#questName").value = q.name || "";
+  $("#questSummary").value = q.summary || "";
+  $("#questSetting").value = q.setting || "";
+  $("#questGoal").value = q.goal || "";
+  $("#questOpening").value = q.opening || "";
+  $("#questHooks").value = q.hooks || "";
+  $("#questWorldHint").value = q.worldHint || "";
+  $("#questTags").value = (q.tags || []).join(", ");
+  renderQuestNpcs(q.npcs && q.npcs.length ? q.npcs : []);
+}
+function readQuestFromModal() {
+  return {
+    name: $("#questName").value.trim() || "(無題のクエスト)",
+    summary: $("#questSummary").value.trim(),
+    setting: $("#questSetting").value.trim(),
+    goal: $("#questGoal").value.trim(),
+    opening: $("#questOpening").value.trim(),
+    hooks: $("#questHooks").value.trim(),
+    worldHint: $("#questWorldHint").value.trim(),
+    npcs: readQuestNpcs().filter((n) => n.name).slice(0, 3),
+    tags: $("#questTags").value.split(",").map((s) => s.trim()).filter(Boolean),
+  };
+}
+
+$("#btnNewQuest").addEventListener("click", () => openQuestModal(null));
+$("#btnAddNpc").addEventListener("click", () => {
+  const cur = readQuestNpcs();
+  if (cur.length >= 3) { toast("NPCは最大3体までです"); return; }
+  cur.push({ name: "", persona: "", tone: "", greeting: "" });
+  renderQuestNpcs(cur);
+});
+$("#questSave").addEventListener("click", () => {
+  const data = readQuestFromModal();
+  if (state.editingQuestId) {
+    const q = state.quests.find((x) => x.id === state.editingQuestId);
+    if (q) Object.assign(q, data, { updatedAt: now() });
+  } else {
+    state.quests.push(makeQuest({ ...data }));
+  }
+  saveQuests();
+  hideModal(questModal);
+  renderQuestList();
+  toast("クエストを保存しました");
+});
+$("#questDelete").addEventListener("click", () => {
+  if (!state.editingQuestId) return;
+  hideModal(questModal);
+  deleteQuest(state.editingQuestId);
+});
+$("#questStart").addEventListener("click", () => {
+  // 編集中の内容で一旦保存しつつ、即時開始
+  const data = readQuestFromModal();
+  let id = state.editingQuestId;
+  if (id) {
+    const q = state.quests.find((x) => x.id === id);
+    if (q) Object.assign(q, data, { updatedAt: now() });
+  } else {
+    const q = makeQuest({ ...data });
+    state.quests.push(q);
+    id = q.id;
+  }
+  saveQuests();
+  hideModal(questModal);
+  startQuestById(id);
+});
+
+// ---------- Start quest ----------
+function startQuestById(id) {
+  const q = state.quests.find((x) => x.id === id);
+  if (!q) return;
+  // 新しいチャットを作成
+  const slots = newSlots();
+  // 自分スロットは現在のチャットの「自分」を引き継ぐ
+  const cur = currentChat();
+  if (cur && cur.slots[0]) slots[0] = { ...cur.slots[0] };
+  q.npcs.forEach((npc, i) => {
+    const slot = slots[i + 1];
+    if (!slot) return;
+    slots[i + 1] = {
+      name: npc.name || "",
+      image: npc.image || "",
+      persona: npc.persona || "",
+      tone: npc.tone || "",
+      greeting: npc.greeting || "",
+    };
+  });
+  const selectedIdxs = q.npcs.map((_, i) => i + 1).filter((i) => slots[i] && slots[i].name);
+  const situationParts = [];
+  if (q.setting) situationParts.push(`# 場面・舞台\n${q.setting}`);
+  if (q.goal) situationParts.push(`# 目標\n${q.goal}`);
+  if (q.hooks) situationParts.push(`# 展開のフック\n${q.hooks}`);
+  if (q.worldHint) situationParts.push(`# このクエスト固有の世界観\n${q.worldHint}`);
+  const chat = makeChat({
+    name: q.name,
+    slots,
+    selectedIdxs,
+    situation: situationParts.join("\n\n"),
+  });
+  // 冒頭の地の文を初回メッセージとして追加
+  if (q.opening) {
+    chat.history.push({
+      role: "assistant",
+      name: NARRATION_LABEL,
+      narration: true,
+      content: q.opening,
+    });
+  }
+  // 各 NPC の挨拶も追加
+  q.npcs.forEach((npc, i) => {
+    if (npc.greeting && npc.name) {
+      chat.history.push({
+        role: "assistant",
+        name: npc.name,
+        content: npc.greeting,
+      });
+    }
+  });
+  state.chats.push(chat);
+  setCurrentChat(chat.id);
+  saveChats();
+  hideModal(drawerEl);
+  renderAll();
+  toast(`「${q.name}」を開始しました`);
+}
+
+// ---------- LLM quest generation ----------
+$("#btnGenQuest").addEventListener("click", () => {
+  $("#genQuestTheme").value = "";
+  $("#genQuestUseWorld").value = state.world.description ? "yes" : "no";
+  showModal(genQuestModal);
+});
+$("#genQuestRun").addEventListener("click", async (e) => {
+  if (!state.api.key) { toast("API キーが未設定です"); return; }
+  const theme = $("#genQuestTheme").value.trim();
+  const useWorld = $("#genQuestUseWorld").value === "yes";
+  const btn = e.currentTarget;
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = "生成中…";
+  try {
+    const q = await generateQuestFromLLM(theme, useWorld);
+    hideModal(genQuestModal);
+    // 一覧に保存しないまま編集モーダルへ流す (新規扱い)
+    state.editingQuestId = null;
+    $("#questModalTitle").textContent = "新しいクエスト (LLM生成)";
+    $("#questDelete").style.display = "none";
+    fillQuestModal(q);
+    showModal(questModal);
+    toast("生成しました。確認・編集してから保存してください");
+  } catch (err) {
+    toast("失敗: " + (err?.message || String(err)));
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+});
+
+async function generateQuestFromLLM(theme, useWorld) {
+  const worldBlock = useWorld && (state.world.name || state.world.description)
+    ? `# 世界観 (踏まえること)\n${state.world.name ? `タイトル: ${state.world.name}\n` : ""}${state.world.description}\n`
+    : "";
+  const system = `あなたはTRPGや小説のシナリオライターです。プレイヤーが楽しめる短編クエスト (1〜数時間で遊べる規模) を考案します。`;
+  const user = `${worldBlock}# テーマ・要望
+${theme || "(指定なし。フリー)"}
+
+# 出力形式 (厳守)
+以下の JSON オブジェクトを 1 つだけ返してください。前置き・あとがき・コードブロック・解説などは一切書かない。
+
+{
+  "name": "クエスト名 (短く印象的に)",
+  "summary": "1〜2行のあらまし",
+  "setting": "場面・舞台・時間帯 (具体的に)",
+  "goal": "プレイヤーが達成すべき目標 (明確に)",
+  "opening": "クエスト開始時に流れる導入の地の文 (3〜6文)",
+  "hooks": "想定される展開・伏線・GMが引き出せる要素 (箇条書き可)",
+  "worldHint": "このクエスト固有の追加世界観 (なければ空文字)",
+  "npcs": [
+    { "name": "NPC名", "persona": "人格・背景", "tone": "口調の特徴", "greeting": "出会った時の最初の一言" }
+  ],
+  "tags": ["ジャンルタグ", "..."]
+}
+
+# 制約
+- npcs は 1〜3 体
+- 全フィールド日本語で具体的に
+- ナレーション (opening) は地の文のみ。台詞は含めない
+- 不要な改行や空行を出力に入れない
+- 出力は JSON ただ1つ。前後にテキストや改行を一切付けない`;
+  const messages = [{ role: "user", content: user }];
+  const prevMax = state.api.maxTokens;
+  state.api.maxTokens = Math.max(prevMax, 4096);
+  let text;
+  try {
+    if (state.api.provider === "gemini") text = await callGemini(system, messages);
+    else if (state.api.provider === "anthropic") text = await callAnthropic(system, messages);
+    else text = await callOpenAI(system, messages);
+  } finally {
+    state.api.maxTokens = prevMax;
+  }
+  const obj = parseQuestJSON(text);
+  return makeQuest(obj);
+}
+
+function parseQuestJSON(text) {
+  if (!text) throw new Error("空の応答");
+  // コードフェンスや前後の文章があっても拾えるように、最初の { から最後の } までを抽出
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < 0 || end < start) {
+    throw new Error("JSONが見つかりません: " + text.slice(0, 200));
+  }
+  const json = text.slice(start, end + 1);
+  let obj;
+  try {
+    obj = JSON.parse(json);
+  } catch (e) {
+    throw new Error("JSON解析失敗: " + e.message);
+  }
+  if (!obj || typeof obj !== "object") throw new Error("不正な構造");
+  return obj;
+}
