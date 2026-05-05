@@ -38,8 +38,26 @@ const DEFAULT_MODELS = {
 };
 
 const EMPTY_CHAR = () => ({
-  name: "", image: "", persona: "", tone: "", greeting: "",
+  name: "", image: "",
+  appearance: "",
+  persona: "",
+  background: "",
+  abilities: "",
+  tone: "",
+  quirks: "",
+  greeting: "",
 });
+
+const CHAR_TEXT_FIELDS = ["appearance", "persona", "background", "abilities", "tone", "quirks", "greeting"];
+const CHAR_FIELD_LABELS = {
+  appearance: "外見",
+  persona: "性格・人格",
+  background: "経歴・背景",
+  abilities: "能力・特技",
+  tone: "口調",
+  quirks: "口癖・好み",
+  greeting: "最初の一言",
+};
 
 // ---------- Helpers ----------
 const $ = (sel, root) => (root || document).querySelector(sel);
@@ -625,17 +643,26 @@ function openCharModal(idx) {
   const isSelf = idx === 0;
   $("#charModalTitle").textContent = isSelf ? "あなた (自分) の設定" : `キャラクター ${idx} の設定`;
   $("#charName").value = ch.name || "";
+  $("#charAppearance").value = ch.appearance || "";
   $("#charPersona").value = ch.persona || "";
+  $("#charBackground").value = ch.background || "";
+  $("#charAbilities").value = ch.abilities || "";
   $("#charTone").value = ch.tone || "";
+  $("#charQuirks").value = ch.quirks || "";
   $("#charGreeting").value = ch.greeting || "";
   editingImage = ch.image || "";
   updateAvatarPreview();
 
+  // 自分スロットでは外見以外を隠す (名前と画像で簡素に表示)
+  $("#appearanceField").style.display = isSelf ? "" : "";
   $("#personaField").style.display = isSelf ? "none" : "";
+  $("#backgroundField").style.display = isSelf ? "none" : "";
+  $("#abilitiesField").style.display = isSelf ? "none" : "";
   $("#toneField").style.display = isSelf ? "none" : "";
+  $("#quirksField").style.display = isSelf ? "none" : "";
   $("#greetingField").style.display = isSelf ? "none" : "";
   $("#charDelete").style.display = isSelf ? "none" : "";
-  $("#presetControls").style.display = ""; // self も含め常に表示
+  $("#presetControls").style.display = "";
 
   showModal(charModal);
   $("#charName").focus();
@@ -674,15 +701,18 @@ $("#charSave").addEventListener("click", () => {
   const next = {
     name: $("#charName").value.trim(),
     image: editingImage,
+    appearance: $("#charAppearance").value.trim(),
     persona: isSelf ? "" : $("#charPersona").value.trim(),
+    background: isSelf ? "" : $("#charBackground").value.trim(),
+    abilities: isSelf ? "" : $("#charAbilities").value.trim(),
     tone: isSelf ? "" : $("#charTone").value.trim(),
+    quirks: isSelf ? "" : $("#charQuirks").value.trim(),
     greeting: isSelf ? "" : $("#charGreeting").value.trim(),
   };
   chat.slots[idx] = next;
   touchChat();
   renderSlots();
   hideModal(charModal);
-  // greeting auto-post if newly added
   if (!isSelf && next.greeting && next.greeting !== prev.greeting && !chat.history.some((m) => m.content === next.greeting)) {
     pushMessage({ role: "assistant", name: next.name || `CH${idx}`, content: next.greeting });
   }
@@ -713,8 +743,12 @@ $("#savePresetConfirm").addEventListener("click", () => {
   const payload = {
     name,
     image: editingImage,
+    appearance: $("#charAppearance").value.trim(),
     persona: $("#charPersona").value.trim(),
+    background: $("#charBackground").value.trim(),
+    abilities: $("#charAbilities").value.trim(),
     tone: $("#charTone").value.trim(),
+    quirks: $("#charQuirks").value.trim(),
     greeting: $("#charGreeting").value.trim(),
   };
   const existing = state.presets.find((p) => p.name === name);
@@ -747,8 +781,12 @@ function renderPresetPickerList() {
     card.appendChild(img); card.appendChild(name);
     card.addEventListener("click", () => {
       $("#charName").value = p.name || "";
+      $("#charAppearance").value = p.appearance || "";
       $("#charPersona").value = p.persona || "";
+      $("#charBackground").value = p.background || "";
+      $("#charAbilities").value = p.abilities || "";
       $("#charTone").value = p.tone || "";
+      $("#charQuirks").value = p.quirks || "";
       $("#charGreeting").value = p.greeting || "";
       editingImage = p.image || "";
       updateAvatarPreview();
@@ -1063,15 +1101,37 @@ function buildSystemPrompt() {
     parts.push(chat.carryover);
   }
 
-  const selfLine = self.name ? `ユーザー (対話相手) の名前は「${self.name}」。` : "";
+  let selfLine = "";
+  {
+    const bits = [];
+    if (self.name) bits.push(`名前: ${self.name}`);
+    if (self.appearance) bits.push(`外見: ${self.appearance}`);
+    if (bits.length) selfLine = `# ユーザー (対話相手)\n${bits.join("\n")}`;
+  }
 
   const charName = (c) => c.name || `CH${c.idx}`;
+  const charDescBlock = (c, asHeader) => {
+    const lines = [];
+    if (asHeader) lines.push(`## ${charName(c)}`);
+    const map = [
+      ["外見", c.appearance],
+      ["性格・人格", c.persona],
+      ["経歴・背景", c.background],
+      ["能力・特技", c.abilities],
+      ["口調", c.tone],
+      ["口癖・好み", c.quirks],
+    ];
+    for (const [label, val] of map) {
+      if (val) lines.push(asHeader ? `${label}: ${val}` : `${label}:\n${val}`);
+    }
+    return lines.join("\n");
+  };
   if (selected.length === 1) {
     const c = selected[0];
     parts.push("# 演じるキャラクター");
     parts.push(`名前: ${charName(c)}`);
-    if (c.persona) parts.push(`人格・背景:\n${c.persona}`);
-    if (c.tone) parts.push(`口調:\n${c.tone}`);
+    const desc = charDescBlock(c, false);
+    if (desc) parts.push(desc);
     if (selfLine) parts.push(selfLine);
     parts.push("# 出力フォーマット (厳守)");
     parts.push(`- 出力はブロックの集合とする。各ブロックは "[ラベル] 本文" の形式で必ず先頭に [ラベル] を置く。
@@ -1084,12 +1144,7 @@ function buildSystemPrompt() {
 - メタ発言 (作者視点のコメント、"続けます"等) は書かない。`);
     if (LENGTH_INSTR[chat.responseLength]) parts.push("# 文量\n" + LENGTH_INSTR[chat.responseLength]);
   } else {
-    const blocks = selected.map((c) => {
-      const lines = [`## ${charName(c)}`];
-      if (c.persona) lines.push(`設定: ${c.persona}`);
-      if (c.tone) lines.push(`口調: ${c.tone}`);
-      return lines.join("\n");
-    }).join("\n\n");
+    const blocks = selected.map((c) => charDescBlock(c, true)).join("\n\n");
     const names = selected.map(charName).join(", ");
     parts.push("# 演じるキャラクター (複数)");
     parts.push(`以下の全員を同時に演じてください: ${names}`);
@@ -1476,10 +1531,15 @@ function startQuestById(id) {
     const slot = slots[i + 1];
     if (!slot) return;
     slots[i + 1] = {
+      ...EMPTY_CHAR(),
       name: npc.name || "",
       image: npc.image || "",
+      appearance: npc.appearance || "",
       persona: npc.persona || "",
+      background: npc.background || "",
+      abilities: npc.abilities || "",
       tone: npc.tone || "",
+      quirks: npc.quirks || "",
       greeting: npc.greeting || "",
     };
   });
@@ -1572,7 +1632,16 @@ ${theme || "(指定なし。フリー)"}
   "hooks": "想定される展開・伏線・GMが引き出せる要素 (箇条書き可)",
   "worldHint": "このクエスト固有の追加世界観 (なければ空文字)",
   "npcs": [
-    { "name": "NPC名", "persona": "人格・背景", "tone": "口調の特徴", "greeting": "出会った時の最初の一言" }
+    {
+      "name": "NPC名",
+      "appearance": "外見・容姿・服装",
+      "persona": "性格・人格",
+      "background": "経歴・背景",
+      "abilities": "能力・特技",
+      "tone": "口調の特徴",
+      "quirks": "口癖・好み・癖",
+      "greeting": "出会った時の最初の一言"
+    }
   ],
   "tags": ["ジャンルタグ", "..."]
 }
@@ -1686,9 +1755,19 @@ function buildChatHTML(chat) {
     if (!s.name && !s.image) return "";
     const role = i === 0 ? "YOU" : `CH${i}`;
     const img = s.image ? `<img src="${s.image}" alt="">` : "";
-    const persona = s.persona ? `<p class="cs-persona">${escapeHtml(s.persona)}</p>` : "";
-    const tone = s.tone ? `<p class="cs-tone">口調: ${escapeHtml(s.tone)}</p>` : "";
-    return `<div class="charcard"><div class="cs-img">${img}</div><div class="cs-body"><div class="cs-role">${role}</div><div class="cs-name">${escapeHtml(s.name || "(無名)")}</div>${persona}${tone}</div></div>`;
+    const fieldRows = [];
+    const map = [
+      ["外見", s.appearance],
+      ["性格", s.persona],
+      ["経歴", s.background],
+      ["能力", s.abilities],
+      ["口調", s.tone],
+      ["口癖", s.quirks],
+    ];
+    for (const [label, val] of map) {
+      if (val) fieldRows.push(`<p class="cs-row"><span class="cs-lbl">${label}</span> ${escapeHtml(val)}</p>`);
+    }
+    return `<div class="charcard"><div class="cs-img">${img}</div><div class="cs-body"><div class="cs-role">${role}</div><div class="cs-name">${escapeHtml(s.name || "(無名)")}</div>${fieldRows.join("")}</div></div>`;
   }).join("");
   const meta = [];
   if (state.world.name || state.world.description) {
@@ -1728,7 +1807,8 @@ function buildChatHTML(chat) {
   .cs-body{min-width:0;flex:1}
   .cs-role{font-size:10px;color:var(--accent);letter-spacing:0.1em}
   .cs-name{font-weight:700}
-  .cs-persona,.cs-tone{margin:4px 0;font-size:12px;color:var(--dim)}
+  .cs-row{margin:3px 0;font-size:12px;color:var(--dim)}
+  .cs-lbl{display:inline-block;min-width:36px;color:var(--accent);font-size:10px;letter-spacing:.05em;margin-right:4px}
   .meta{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:16px}
   .meta h2{margin:0 0 6px;font-size:14px;color:var(--accent)}
   .meta h3{margin:0 0 6px;font-size:13px}

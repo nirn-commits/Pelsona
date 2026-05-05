@@ -172,15 +172,31 @@
           <span>名前</span>
           <input type="text" id="charName" maxlength="40" placeholder="キャラ名" />
         </label>
-        <label class="field" id="personaField">
-          <span>キャラ設定 (人格・背景・性格など)</span>
-          <textarea id="charPersona" rows="4" placeholder="例: クールで知的な探偵。皮肉屋だが情に厚い。"></textarea>
+        <label class="field charField" id="appearanceField">
+          <span>外見 (容姿・服装・雰囲気)</span>
+          <textarea id="charAppearance" rows="3" placeholder="例: 黒髪のショートカット。長身痩躯で黒のロングコート。常にどこか退屈そうな目をしている。"></textarea>
         </label>
-        <label class="field" id="toneField">
-          <span>口調 (話し方の特徴)</span>
-          <textarea id="charTone" rows="3" placeholder="例: 一人称は「僕」。語尾に「〜だよ」を使う。敬語は使わない。"></textarea>
+        <label class="field charField" id="personaField">
+          <span>性格・人格</span>
+          <textarea id="charPersona" rows="3" placeholder="例: クールで知的。皮肉屋だが情に厚い。直感を信じるタイプ。"></textarea>
         </label>
-        <label class="field" id="greetingField">
+        <label class="field charField" id="backgroundField">
+          <span>経歴・背景</span>
+          <textarea id="charBackground" rows="3" placeholder="例: 元は王立警察の捜査官。冤罪事件の責任を負って退職し、現在は私立探偵。"></textarea>
+        </label>
+        <label class="field charField" id="abilitiesField">
+          <span>能力・特技</span>
+          <textarea id="charAbilities" rows="2" placeholder="例: 観察眼。簡単な魔法。剣術 (護身レベル)。"></textarea>
+        </label>
+        <label class="field charField" id="toneField">
+          <span>口調</span>
+          <textarea id="charTone" rows="2" placeholder="例: 一人称は「僕」。語尾に「〜だよ」を使う。敬語は使わない。"></textarea>
+        </label>
+        <label class="field charField" id="quirksField">
+          <span>口癖・好み・癖</span>
+          <textarea id="charQuirks" rows="2" placeholder="例: 考え事をする時に銀貨を弄ぶ。甘党。猫を見ると目で追う。"></textarea>
+        </label>
+        <label class="field charField" id="greetingField">
           <span>最初の一言 (任意)</span>
           <input type="text" id="charGreeting" placeholder="例: やあ、今日はどんな依頼だい？" />
         </label>
