@@ -449,10 +449,32 @@
           <textarea id="questWorldHint" rows="3" placeholder="例: この地域では魔法の使用が禁じられている。"></textarea>
         </label>
         <label class="field">
-          <span>登場 NPC (JSON 配列でも 1 体ずつでも可)</span>
+          <span>登場 NPC (味方・関係者・最大3体)</span>
           <div id="questNpcs" class="quest-npcs"></div>
           <button type="button" id="btnAddNpc" class="btn btn-ghost btn-small">＋ NPC を追加</button>
-          <small class="hint">最大3体。クエスト開始時にスロット 1〜3 へ配置されます。</small>
+          <small class="hint">クエスト開始時にスロット 1〜3 へ配置されます。</small>
+        </label>
+        <label class="field">
+          <span>敵キャラ (最大5体・任意)</span>
+          <div id="questEnemies" class="quest-npcs"></div>
+          <button type="button" id="btnAddEnemy" class="btn btn-ghost btn-small">＋ 敵を追加</button>
+          <small class="hint">敵はスロットに配置されず、システムプロンプトに記述として渡されます。</small>
+        </label>
+        <label class="field">
+          <span>クリア条件 (1行ずつ)</span>
+          <textarea id="questClearConditions" rows="3" placeholder="例:&#10;- 黎明の宝玉を持ち帰る&#10;- パーティ全員が生存"></textarea>
+        </label>
+        <label class="field">
+          <span>失敗条件 (1行ずつ・任意)</span>
+          <textarea id="questFailConditions" rows="2" placeholder="例:&#10;- 主人公が死亡&#10;- 宝玉が破壊される"></textarea>
+        </label>
+        <label class="field">
+          <span>シナリオフラグ (任意・状況の判定用)</span>
+          <textarea id="questFlags" rows="3" placeholder="例:&#10;- 罠を解除した&#10;- 守護者と交渉した&#10;- 古文書を入手した"></textarea>
+        </label>
+        <label class="field">
+          <span>主要イベント (任意・展開のタイミング)</span>
+          <textarea id="questEvents" rows="4" placeholder="例:&#10;- 序盤: 入口で謎の影を目撃&#10;- 中盤: 守護者と遭遇 (戦闘 or 対話)&#10;- 終盤: 祭壇の試練"></textarea>
         </label>
         <label class="field">
           <span>タグ (カンマ区切り・任意)</span>
@@ -479,16 +501,56 @@
       </div>
       <div class="modal-body">
         <label class="field">
-          <span>テーマ・要望</span>
-          <textarea id="genQuestTheme" rows="4" placeholder="例: 異世界ファンタジー。盗賊の街での潜入任務。シリアス寄り。NPC2体（情報屋と相棒）。"></textarea>
+          <span>テーマ・要望 (任意)</span>
+          <textarea id="genQuestTheme" rows="4" placeholder="例: 盗賊の街での潜入任務。NPC2体（情報屋と相棒）。"></textarea>
         </label>
-        <label class="field">
-          <span>世界観の参照</span>
-          <select id="genQuestUseWorld">
-            <option value="yes">設定済みの世界観を踏まえる</option>
-            <option value="no">独立したクエストとして作る</option>
-          </select>
-        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>ジャンル</span>
+            <select id="genQuestGenre">
+              <option value="">指定なし</option>
+              <option value="ファンタジー">ファンタジー</option>
+              <option value="SF">SF</option>
+              <option value="現代">現代</option>
+              <option value="ホラー">ホラー</option>
+              <option value="ミステリー">ミステリー</option>
+              <option value="日常">日常</option>
+              <option value="サイバーパンク">サイバーパンク</option>
+              <option value="ポストアポカリプス">ポストアポカリプス</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>雰囲気</span>
+            <select id="genQuestTone">
+              <option value="">指定なし</option>
+              <option value="シリアス">シリアス</option>
+              <option value="ハードボイルド">ハードボイルド</option>
+              <option value="ほのぼの">ほのぼの</option>
+              <option value="コメディ">コメディ</option>
+              <option value="サスペンス">サスペンス</option>
+              <option value="ダーク">ダーク</option>
+            </select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>難易度</span>
+            <select id="genQuestDifficulty">
+              <option value="">指定なし</option>
+              <option value="初級">初級 (戦闘控えめ)</option>
+              <option value="中級">中級 (戦闘・謎解き)</option>
+              <option value="上級">上級 (高難度)</option>
+              <option value="鬼畜">鬼畜 (理不尽な困難)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>世界観の参照</span>
+            <select id="genQuestUseWorld">
+              <option value="yes">世界観を踏まえる</option>
+              <option value="no">独立クエスト</option>
+            </select>
+          </label>
+        </div>
         <small class="hint">生成後、クエスト編集画面が開きます。そのまま保存・編集・開始できます。</small>
       </div>
       <div class="modal-footer">

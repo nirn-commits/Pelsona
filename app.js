@@ -120,6 +120,10 @@ const state = {
 };
 
 function makeQuest(opts = {}) {
+  const asLines = (v) => {
+    if (Array.isArray(v)) return v.filter(Boolean).join("\n");
+    return v || "";
+  };
   return {
     id: opts.id || uid(),
     name: opts.name || "新しいクエスト",
@@ -130,6 +134,11 @@ function makeQuest(opts = {}) {
     hooks: opts.hooks || "",
     worldHint: opts.worldHint || "",
     npcs: Array.isArray(opts.npcs) ? opts.npcs.slice(0, 3) : [],
+    enemies: Array.isArray(opts.enemies) ? opts.enemies.slice(0, 5) : [],
+    clearConditions: asLines(opts.clearConditions),
+    failConditions: asLines(opts.failConditions),
+    flags: asLines(opts.flags),
+    events: asLines(opts.events),
     tags: Array.isArray(opts.tags) ? opts.tags : (opts.tags ? String(opts.tags).split(",").map(s => s.trim()).filter(Boolean) : []),
     createdAt: opts.createdAt || now(),
     updatedAt: opts.updatedAt || now(),
@@ -1441,53 +1450,65 @@ function deleteQuest(id) {
   toast("削除しました");
 }
 
-// NPC editor
-function renderQuestNpcs(npcs) {
-  const wrap = $("#questNpcs");
+// NPC / Enemy editor (shared)
+function renderQuestPeople(containerId, list, opts = {}) {
+  const wrap = $("#" + containerId);
   wrap.innerHTML = "";
-  npcs.forEach((npc, idx) => {
+  const isEnemy = opts.isEnemy === true;
+  list.forEach((item, idx) => {
     const card = document.createElement("div");
     card.className = "quest-npc";
     card.dataset.idx = String(idx);
     const row = document.createElement("div");
     row.className = "quest-npc-row";
     const name = document.createElement("input");
-    name.type = "text"; name.placeholder = "名前"; name.value = npc.name || "";
+    name.type = "text"; name.placeholder = "名前"; name.value = item.name || "";
     name.dataset.field = "name";
     const remove = document.createElement("button");
     remove.type = "button"; remove.className = "quest-npc-remove"; remove.textContent = "✕";
-    remove.title = "この NPC を削除";
+    remove.title = "削除";
     remove.addEventListener("click", () => {
-      const cur = readQuestNpcs();
+      const cur = readQuestPeople(containerId);
       cur.splice(idx, 1);
-      renderQuestNpcs(cur);
+      renderQuestPeople(containerId, cur, opts);
     });
     row.appendChild(name); row.appendChild(remove);
+    const appearance = document.createElement("textarea");
+    appearance.placeholder = "外見"; appearance.rows = 1; appearance.value = item.appearance || "";
+    appearance.dataset.field = "appearance";
     const persona = document.createElement("textarea");
-    persona.placeholder = "人格・背景"; persona.rows = 2; persona.value = npc.persona || "";
+    persona.placeholder = isEnemy ? "性格・脅威・動機" : "性格・人格"; persona.rows = 2; persona.value = item.persona || "";
     persona.dataset.field = "persona";
-    const tone = document.createElement("textarea");
-    tone.placeholder = "口調"; tone.rows = 1; tone.value = npc.tone || "";
+    const abilities = document.createElement("textarea");
+    abilities.placeholder = isEnemy ? "能力・戦術" : "能力・特技"; abilities.rows = 1; abilities.value = item.abilities || "";
+    abilities.dataset.field = "abilities";
+    const tone = document.createElement("input");
+    tone.type = "text"; tone.placeholder = "口調 (任意)"; tone.value = item.tone || "";
     tone.dataset.field = "tone";
     const greeting = document.createElement("input");
-    greeting.type = "text"; greeting.placeholder = "最初の一言 (任意)"; greeting.value = npc.greeting || "";
+    greeting.type = "text"; greeting.placeholder = isEnemy ? "登場時の一言・台詞" : "最初の一言 (任意)"; greeting.value = item.greeting || "";
     greeting.dataset.field = "greeting";
     card.appendChild(row);
+    card.appendChild(appearance);
     card.appendChild(persona);
+    card.appendChild(abilities);
     card.appendChild(tone);
     card.appendChild(greeting);
     wrap.appendChild(card);
   });
 }
-function readQuestNpcs() {
-  return $$(".quest-npc", $("#questNpcs")).map((card) => {
-    const npc = { name: "", persona: "", tone: "", greeting: "" };
+function readQuestPeople(containerId) {
+  return $$(".quest-npc", $("#" + containerId)).map((card) => {
+    const obj = { name: "", appearance: "", persona: "", abilities: "", tone: "", greeting: "" };
     $$("input,textarea", card).forEach((el) => {
-      if (el.dataset.field) npc[el.dataset.field] = el.value.trim();
+      if (el.dataset.field) obj[el.dataset.field] = el.value.trim();
     });
-    return npc;
+    return obj;
   });
 }
+// Backward-compat aliases used elsewhere
+function renderQuestNpcs(npcs) { renderQuestPeople("questNpcs", npcs || []); }
+function readQuestNpcs() { return readQuestPeople("questNpcs"); }
 
 function openQuestModal(id) {
   let q;
@@ -1514,8 +1535,13 @@ function fillQuestModal(q) {
   $("#questOpening").value = q.opening || "";
   $("#questHooks").value = q.hooks || "";
   $("#questWorldHint").value = q.worldHint || "";
+  $("#questClearConditions").value = q.clearConditions || "";
+  $("#questFailConditions").value = q.failConditions || "";
+  $("#questFlags").value = q.flags || "";
+  $("#questEvents").value = q.events || "";
   $("#questTags").value = (q.tags || []).join(", ");
-  renderQuestNpcs(q.npcs && q.npcs.length ? q.npcs : []);
+  renderQuestPeople("questNpcs", q.npcs && q.npcs.length ? q.npcs : []);
+  renderQuestPeople("questEnemies", q.enemies && q.enemies.length ? q.enemies : [], { isEnemy: true });
 }
 function readQuestFromModal() {
   return {
@@ -1526,17 +1552,28 @@ function readQuestFromModal() {
     opening: $("#questOpening").value.trim(),
     hooks: $("#questHooks").value.trim(),
     worldHint: $("#questWorldHint").value.trim(),
-    npcs: readQuestNpcs().filter((n) => n.name).slice(0, 3),
+    clearConditions: $("#questClearConditions").value.trim(),
+    failConditions: $("#questFailConditions").value.trim(),
+    flags: $("#questFlags").value.trim(),
+    events: $("#questEvents").value.trim(),
+    npcs: readQuestPeople("questNpcs").filter((n) => n.name).slice(0, 3),
+    enemies: readQuestPeople("questEnemies").filter((n) => n.name).slice(0, 5),
     tags: $("#questTags").value.split(",").map((s) => s.trim()).filter(Boolean),
   };
 }
 
 $("#btnNewQuest").addEventListener("click", () => openQuestModal(null));
 $("#btnAddNpc").addEventListener("click", () => {
-  const cur = readQuestNpcs();
+  const cur = readQuestPeople("questNpcs");
   if (cur.length >= 3) { toast("NPCは最大3体までです"); return; }
-  cur.push({ name: "", persona: "", tone: "", greeting: "" });
-  renderQuestNpcs(cur);
+  cur.push({ name: "", appearance: "", persona: "", abilities: "", tone: "", greeting: "" });
+  renderQuestPeople("questNpcs", cur);
+});
+$("#btnAddEnemy").addEventListener("click", () => {
+  const cur = readQuestPeople("questEnemies");
+  if (cur.length >= 5) { toast("敵は最大5体までです"); return; }
+  cur.push({ name: "", appearance: "", persona: "", abilities: "", tone: "", greeting: "" });
+  renderQuestPeople("questEnemies", cur, { isEnemy: true });
 });
 $("#questSave").addEventListener("click", () => {
   const data = readQuestFromModal();
@@ -1602,7 +1639,23 @@ function startQuestById(id) {
   const selectedIdxs = q.npcs.map((_, i) => i + 1).filter((i) => slots[i] && slots[i].name);
   const situationParts = [];
   if (q.setting) situationParts.push(`# 場面・舞台\n${q.setting}`);
-  if (q.goal) situationParts.push(`# 目標\n${q.goal}`);
+  if (q.goal) situationParts.push(`# 主目標\n${q.goal}`);
+  if (q.clearConditions) situationParts.push(`# クリア条件\n${q.clearConditions}`);
+  if (q.failConditions) situationParts.push(`# 失敗条件\n${q.failConditions}`);
+  if (q.flags) situationParts.push(`# シナリオフラグ (達成済みなら明示する)\n${q.flags}`);
+  if (q.events) situationParts.push(`# 主要イベント (適切なタイミングで発生させる)\n${q.events}`);
+  if (q.enemies && q.enemies.length) {
+    const eb = q.enemies.map((e) => {
+      const lines = [`- ${e.name || "(無名)"}`];
+      if (e.appearance) lines.push(`  外見: ${e.appearance}`);
+      if (e.persona) lines.push(`  性格・脅威: ${e.persona}`);
+      if (e.abilities) lines.push(`  能力・戦術: ${e.abilities}`);
+      if (e.tone) lines.push(`  口調: ${e.tone}`);
+      if (e.greeting) lines.push(`  登場時の台詞: ${e.greeting}`);
+      return lines.join("\n");
+    }).join("\n");
+    situationParts.push(`# 敵キャラ\n${eb}`);
+  }
   if (q.hooks) situationParts.push(`# 展開のフック\n${q.hooks}`);
   if (q.worldHint) situationParts.push(`# このクエスト固有の世界観\n${q.worldHint}`);
   const chat = makeChat({
@@ -1641,18 +1694,26 @@ function startQuestById(id) {
 // ---------- LLM quest generation ----------
 $("#btnGenQuest").addEventListener("click", () => {
   $("#genQuestTheme").value = "";
+  $("#genQuestGenre").value = "";
+  $("#genQuestTone").value = "";
+  $("#genQuestDifficulty").value = "";
   $("#genQuestUseWorld").value = state.world.description ? "yes" : "no";
   showModal(genQuestModal);
 });
 $("#genQuestRun").addEventListener("click", async (e) => {
   if (!state.api.key) { toast("API キーが未設定です"); return; }
-  const theme = $("#genQuestTheme").value.trim();
-  const useWorld = $("#genQuestUseWorld").value === "yes";
+  const opts = {
+    theme: $("#genQuestTheme").value.trim(),
+    genre: $("#genQuestGenre").value,
+    tone: $("#genQuestTone").value,
+    difficulty: $("#genQuestDifficulty").value,
+    useWorld: $("#genQuestUseWorld").value === "yes",
+  };
   const btn = e.currentTarget;
   const original = btn.textContent;
   btn.disabled = true; btn.textContent = "生成中…";
   try {
-    const q = await generateQuestFromLLM(theme, useWorld);
+    const q = await generateQuestFromLLM(opts);
     hideModal(genQuestModal);
     // 一覧に保存しないまま編集モーダルへ流す (新規扱い)
     state.editingQuestId = null;
@@ -1668,13 +1729,19 @@ $("#genQuestRun").addEventListener("click", async (e) => {
   }
 });
 
-async function generateQuestFromLLM(theme, useWorld) {
+async function generateQuestFromLLM(opts) {
+  const { theme, genre, tone, difficulty, useWorld } = opts || {};
   const worldBlock = useWorld && (state.world.name || state.world.description)
-    ? `# 世界観 (踏まえること)\n${state.world.name ? `タイトル: ${state.world.name}\n` : ""}${state.world.description}\n`
+    ? `# 世界観 (必ず踏まえること)\n${state.world.name ? `タイトル: ${state.world.name}\n` : ""}${state.world.description}\n`
     : "";
-  const system = `あなたはTRPGや小説のシナリオライターです。プレイヤーが楽しめる短編クエスト (1〜数時間で遊べる規模) を考案します。`;
-  const user = `${worldBlock}# テーマ・要望
-${theme || "(指定なし。フリー)"}
+  const directives = [];
+  if (genre) directives.push(`ジャンル: ${genre}`);
+  if (tone) directives.push(`雰囲気: ${tone}`);
+  if (difficulty) directives.push(`難易度: ${difficulty}`);
+  const directiveBlock = directives.length ? `# 方向性\n${directives.join(" / ")}\n` : "";
+  const system = `あなたはTRPGや小説のシナリオライターです。プレイヤーが楽しめる短編クエスト (1〜数時間で遊べる規模) を考案します。敵キャラ・イベント・フラグ・クリア条件まで含めて、運営に必要な要素を一括で提示してください。`;
+  const user = `${worldBlock}${directiveBlock}# テーマ・要望
+${theme || "(指定なし。完全に自由に発想してよい)"}
 
 # 出力形式 (厳守)
 以下の JSON オブジェクトを 1 つだけ返してください。前置き・あとがき・コードブロック・解説などは一切書かない。
@@ -1683,10 +1750,14 @@ ${theme || "(指定なし。フリー)"}
   "name": "クエスト名 (短く印象的に)",
   "summary": "1〜2行のあらまし",
   "setting": "場面・舞台・時間帯 (具体的に)",
-  "goal": "プレイヤーが達成すべき目標 (明確に)",
+  "goal": "プレイヤーが達成すべき主目標 (1文で明確に)",
   "opening": "クエスト開始時に流れる導入の地の文 (3〜6文)",
   "hooks": "想定される展開・伏線・GMが引き出せる要素 (箇条書き可)",
   "worldHint": "このクエスト固有の追加世界観 (なければ空文字)",
+  "clearConditions": "達成条件 (- で始まる箇条書き、改行区切り、2〜4項目)",
+  "failConditions": "失敗条件 (- で始まる箇条書き、改行区切り、1〜3項目)",
+  "flags": "シナリオの状態判定用フラグ (- で始まる箇条書き、改行区切り、3〜6項目。GMが達成済みかどうか追跡するもの)",
+  "events": "主要イベント (- 序盤: ... / - 中盤: ... / - 終盤: ... の形で改行区切り、3〜6項目)",
   "npcs": [
     {
       "name": "NPC名",
@@ -1700,16 +1771,28 @@ ${theme || "(指定なし。フリー)"}
       "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 }
     }
   ],
+  "enemies": [
+    {
+      "name": "敵の名称",
+      "appearance": "外見・特徴",
+      "persona": "性格・脅威・動機",
+      "abilities": "能力・戦術",
+      "tone": "口調 (任意)",
+      "greeting": "登場時に発する台詞 (任意)",
+      "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10 }
+    }
+  ],
   "tags": ["ジャンルタグ", "..."]
 }
 
 # 制約
-- npcs は 1〜3 体
-- 全フィールド日本語で具体的に
-- ナレーション (opening) は地の文のみ。台詞は含めない
-- 不要な改行や空行を出力に入れない
+- npcs は 1〜3 体、enemies は 0〜3 体 (難易度や物語の必要に応じて)
+- 全フィールド日本語で具体的に。空でよいフィールド以外は必ず埋める
+- opening は地の文のみ。台詞は含めない
+- clearConditions/failConditions/flags/events は箇条書きを改行で区切った文字列。配列ではなく単一の文字列にする
 - 出力は JSON ただ1つ。前後にテキストや改行を一切付けない
-- stats は各値 1〜18 の整数で、キャラの個性に合わせて偏らせる (筋力派は str を高く、知性派は int を高く)。突出した値は 14〜18、平均的な能力は 9〜12 を目安に`;
+- stats は各値 1〜18 の整数で、キャラの個性に合わせて偏らせる (戦闘派は str/con を高く、知性派は int を高く)。突出した値は 14〜18、平均的な能力は 9〜12 を目安に
+- enemies の stats は脅威度に応じて高めにしてよい (ボスは複数高ステータス可)`;
   const messages = [{ role: "user", content: user }];
   const prevMax = state.api.maxTokens;
   state.api.maxTokens = Math.max(prevMax, 4096);
