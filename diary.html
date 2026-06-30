@@ -533,7 +533,7 @@ async function summarizeWithGemini(text) {
   const apiKey = document.getElementById('apiKeyInput').value.trim();
   if (!apiKey) throw new Error('APIキーを入力してください（右上「APIキー」から）');
 
-  const prompt = `以下の日記メモを、箇条書きで簡潔にまとめてください。・（中黒）を使って3〜5項目、各項目は15文字以内で体言止めにしてください。余計な説明は不要です。\n\n${text}`;
+  const prompt = `以下の日記メモを、・（中黒）を使った箇条書きで3〜5項目にまとめてください。各項目は「何をした／どうだった」が伝わるよう20〜30文字程度で書いてください。単なるキーワードではなく、内容がわかる一文にしてください。\n\n例：\n・フリーゲームのオイクメネを少し触ってみた\n・思ったより操作が難しく手こずった\n\n日記：\n${text}`;
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
