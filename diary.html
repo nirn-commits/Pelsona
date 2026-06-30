@@ -536,7 +536,7 @@ async function summarizeWithGemini(text) {
   const prompt = `以下の日記メモを、1〜3文の自然な日本語でまとめてください。体言止めや箇条書きは使わず、その日を振り返る文章として書いてください。\n\n${text}`;
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
